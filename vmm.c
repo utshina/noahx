@@ -1,35 +1,38 @@
 #include <stdio.h>
 #include <stdnoreturn.h>
+#include <alloca.h>
 #include <windows.h>
-#include <WinHvPlatform.h>
 #include "vmm.h"
 
 #define countof(a) (sizeof(a)/sizeof(a[0]))
 
 #define SUCCESS 0x80000000
-#define OR & SUCCESS ^ SUCCESS ||
+#define OR & SUCCESS ^ SUCCESS ?:
 
-noreturn static int
+noreturn static void
 panic(char *msg)
 {
+	fprintf(stderr, "vmm: ");
+	fprintf(stderr, msg);
+	fprintf(stderr, "\n");
+	exit(EXIT_FAILURE);
+}
+
+noreturn static void
+panicw(HRESULT result, char *msg)
+{
+	fprintf(stderr, "vmm: ");
 	fprintf(stderr, msg);
 	fprintf(stderr, "\n");
 	LPVOID lpMsgBuf;
-	FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | 
-		      FORMAT_MESSAGE_FROM_SYSTEM | 
+	FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER |
+		      FORMAT_MESSAGE_FROM_SYSTEM |
 		      FORMAT_MESSAGE_IGNORE_INSERTS,
-		      NULL, GetLastError(),
-		      MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), 
+		      NULL, result,
+		      MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US),
 		      (LPTSTR) &lpMsgBuf, 0, NULL);
 	fprintf(stderr, (const char *)lpMsgBuf);
-	exit(1);
-}
-
-static inline guest_physical_t
-kernel_hvirt_to_gphys(vm_t *vm, void *hvirt)
-{
-	return (guest_physical_t)hvirt - (guest_physical_t)vm->kernel
-		+ vm->kernel_start_guest_physical;
+	exit(EXIT_FAILURE);
 }
 
 void
@@ -63,47 +66,65 @@ vmm_create_vm(vm_t *vm)
 }
 
 void
+vmm_mmap(vm_t *vm, void *hvirt, vmm_gphys_t gphys, size_t size, vmm_mmap_prot_t prot)
+{
+	HRESULT hr;
+
+	printf("mmap: hvirt=%p, gphys=%llx, size=%llx, prot=%x\n",
+	       hvirt, gphys, size, prot);
+	hr = WHvMapGpaRange(vm->handle, hvirt, gphys, size, prot);
+	if (FAILED(hr))
+		panicw(hr, "user mmap error");
+}
+
+char *p;
+
+void
 vmm_setup_vm(vm_t *vm)
 {
-	vm->text_guest_physical = 1 GiB;
-	vm->text_size = 1 GiB;
-	vm->kernel_start_guest_physical = 255 GiB;
+	static const uint64_t KERNEL_OFFSET = 255 GiB;
+	vm->stack_top_gphys = KERNEL_OFFSET;
+	vm->stack_size = 1 GiB;
+	vm->kernel_gphys = KERNEL_OFFSET;
 	vm->kernel_size = 1 MiB;
-	printf("kernel start: %llx\n", vm->kernel_start_guest_physical);
 
-	vm->text = aligned_alloc(PAGE_SIZE, vm->text_size);
-	if (!vm->text)
+	vm->stack = aligned_alloc(PAGE_SIZE_4K, vm->stack_size);
+	if (!vm->stack)
 		panic("out of memory");
-	vm->text[0] = 0xeb;
-	vm->text[1] = 0xfe;
-//	page[0] = 0x0f; page[1] = 0x34;
+	vmm_mmap(vm, vm->stack,
+		 vm->stack_top_gphys - vm->stack_size, vm->stack_size,
+		 VMM_MMAP_PROT_READ | VMM_MMAP_PROT_WRITE);
+	vm->regs.rsp = vm->stack_top_gphys;
 
-	WHvMapGpaRange(
-		vm->handle, vm->text,
-		vm->text_guest_physical, vm->text_size,
-		WHvMapGpaRangeFlagRead | WHvMapGpaRangeFlagWrite | WHvMapGpaRangeFlagExecute)
-		OR panic("map gpa range error (user)");
+	vm->heap_gvirt = 0;
 
-	vm->kernel = aligned_alloc(PAGE_SIZE, vm->kernel_size);
+	vm->kernel = aligned_alloc(PAGE_SIZE_4K, vm->kernel_size);
 	if (!vm->kernel)
 		panic("out of memory");
-
-	WHvMapGpaRange(
-		vm->handle, vm->kernel,
-		vm->kernel_start_guest_physical, vm->kernel_size,
-		WHvMapGpaRangeFlagRead | WHvMapGpaRangeFlagWrite)
-		OR panic("map gpa range error (kernel)");
+	vmm_mmap(vm, vm->kernel, vm->kernel_gphys, vm->kernel_size,
+		 VMM_MMAP_PROT_READ | VMM_MMAP_PROT_WRITE);
 
 	memset(vm->kernel, 0, sizeof(*vm->kernel));
 	uint64_t *pml4_entry = (uint64_t *)vm->kernel->pml4;
 	uint64_t *pdpt_entry = (uint64_t *)vm->kernel->pdpt;
-	pml4_entry[0] = kernel_hvirt_to_gphys(vm, pdpt_entry) | 0x07; // P & RW & US
-	pdpt_entry[0] = 0;
-	pdpt_entry[1] = 1 GiB | 0x87; // P & RW & US & PS & PGE
+	// PML4 entry = P & RW & US
+	pml4_entry[0] = kernel_hvirt_to_gphys(vm, pdpt_entry) | 0x07;
+	for (int i = 0; i < KERNEL_OFFSET / (1 GiB); i++)
+		pdpt_entry[i] = i GiB | 0x87; // P & RW & US & PS & PGE
 
 	vm->kernel->gdt[0] = 0;
 	vm->kernel->gdt[1] = 0x00a0fa000000ffff; // user code
 	vm->kernel->gdt[2] = 0x00c0f2000000ffff; // user data
+}
+
+void
+vmm_push(vm_t *vm, const void *data, size_t n)
+{
+	uint64_t remainder = roundup(n, 8) - n;
+	void *sp = stack_gphys_to_hvirt(vm, vm->regs.rsp);
+	memcpy(sp, data, n);
+	memset(sp + n, 0, remainder);
+	vm->regs.rsp -= n;
 }
 
 void
@@ -116,34 +137,33 @@ int i;
 		OR panic("create virtual processor error");
 
 	enum regs {
-		Cr0, Cr3, Cr4, Efer, Ldtr, Idtr, Gdtr, Tr, Cs, Rip, Ss, Rsp,
-		Ds, Es, Fs, Gs,
+		Cr0 = 0, Cr3, Cr4, Efer, Idtr, Gdtr, Tr,
+		Cs, Rip, Ss, Rsp, Rbp, Ds, Es, Fs, Gs,
 	};
 
 	WHV_REGISTER_NAME regname[] = {
-#define REGNAME(reg) WHvX64Register##reg
-		[Cr0] = REGNAME(Cr0),
-		[Cr3] = REGNAME(Cr3),
-		[Cr4] = REGNAME(Cr4),
-		[Efer] = REGNAME(Efer),
-		[Idtr] = REGNAME(Idtr),
-		[Gdtr] = REGNAME(Gdtr),
-		[Tr] = REGNAME(Tr),
-		[Cs] = REGNAME(Cs),
-		[Rip] = REGNAME(Rip),
-		[Ss] = REGNAME(Ss),
-		[Rsp] = REGNAME(Rsp),
-		[Ds] = REGNAME(Ds),
-		[Es] = REGNAME(Es),
-		[Fs] = REGNAME(Fs),
-		[Gs] = REGNAME(Gs),
+#define REGNAME_ENTRY(reg) [reg] = WHvX64Register##reg
+		REGNAME_ENTRY(Cr0),
+		REGNAME_ENTRY(Cr3),
+		REGNAME_ENTRY(Cr4),
+		REGNAME_ENTRY(Efer),
+		REGNAME_ENTRY(Idtr),
+		REGNAME_ENTRY(Gdtr),
+		REGNAME_ENTRY(Tr),
+		REGNAME_ENTRY(Cs),
+		REGNAME_ENTRY(Rip),
+		REGNAME_ENTRY(Ss),
+		REGNAME_ENTRY(Rsp),
+		REGNAME_ENTRY(Rbp),
+		REGNAME_ENTRY(Ds),
+		REGNAME_ENTRY(Es),
+		REGNAME_ENTRY(Fs),
+		REGNAME_ENTRY(Gs),
 	};
 	WHV_REGISTER_VALUE regvalue[countof(regname)];
 	WHvGetVirtualProcessorRegisters(
 		vm->handle, vm->vcpu_id, regname, countof(regname), regvalue)
 		OR panic("get virtual processor registers error");
-	for (i = 0; i < countof(regname); i++)
-		printf("%d: %llx\n", i, regvalue[i].Reg64);
 
 	regvalue[Cr0].Reg64 |= (CR0_PE | CR0_PG);
 	regvalue[Cr3].Reg64 = kernel_hvirt_to_gphys(vm, vm->kernel->pml4);
@@ -162,28 +182,36 @@ int i;
 		.Selector = 0x08, .Attributes = 0xa0fb,
 	};
 	regvalue[Cs].Segment = CodeSegment;
-	regvalue[Rip].Reg64 = vm->text_guest_physical;
+	regvalue[Rip].Reg64 = vm->regs.rip;
+	printf("%llx\n", regvalue[Rip].Reg64);
+	regvalue[Rsp].Reg64 = vm->regs.rsp;
+	regvalue[Rbp].Reg64 = vm->regs.rsp;
 	WHV_X64_SEGMENT_REGISTER DataSegment = {
 		.Base = 0, .Limit = 0xffff,
 		.Selector = 0x10, .Attributes = 0xc0f3,
 	};
-	regvalue[Rsp].Reg64 = 2 GiB;
 	regvalue[Ss].Segment = DataSegment;
 	regvalue[Ds].Segment = DataSegment;
 	regvalue[Es].Segment = DataSegment;
 	regvalue[Fs].Segment = DataSegment;
 	regvalue[Gs].Segment = DataSegment;
-	for (i = 0; i < countof(regname); i++)
-		printf("%d: %llx\n", i, regvalue[i].Reg64);
 	WHvSetVirtualProcessorRegisters(
 		vm->handle, vm->vcpu_id, regname, countof(regname), regvalue)
 		OR panic("set virtual processor registers error");
+}
 
+void
+vmm_get_regs(vm_t *vm, vmm_regs_t *regs, int count)
+{
+	WHV_REGISTER_NAME *regname = alloca(sizeof(*regname) * count);
+	WHV_REGISTER_VALUE *regvalue = alloca(sizeof(*regvalue) * count);
+	for (int i = 0; i < count; i++)
+		regname[i] = regs[i].name;
 	WHvGetVirtualProcessorRegisters(
-		vm->handle, vm->vcpu_id, regname, countof(regname), regvalue)
+		vm->handle, vm->vcpu_id, regname, count, regvalue)
 		OR panic("get virtual processor registers error");
-	for (i = 0; i < countof(regname); i++)
-		printf("%d: %llx\n", i, regvalue[i].Reg64);
+	for (int i = 0; i < count; i++)
+		regs[i].value = regvalue[i];
 }
 
 bool

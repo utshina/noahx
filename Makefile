@@ -1,19 +1,28 @@
 TARGET = noahx.exe
-CFLAGS = -I.
+CC = gcc
+CFLAGS = -std=c11 -I.
 LDFLAGS = -L/cygdrive/c/Windows/System32 -lWinHvPlatform
-WINSDK = /cygdrive/c/Program Files (x86)/Windows Kits/10/Include
+WINSDKDIR = /cygdrive/c/Program Files (x86)/Windows Kits/10/Include
 HEADERS = WinHvPlatform.h WinHvPlatformDefs.h
-OBJS = main.o vmm.o
+SRCS = $(shell ls *.c)
+OBJS = $(patsubst %.c,%.o,$(SRCS))
 INCS = $(shell ls *.h)
 
 .c.o:
-	gcc -std=c11 $(CFLAGS) -c $<
+	gcc $(CFLAGS) -c $<
 
-$(TARGET): $(INCS) $(OBJS) $(HEADERS)
+
+.PHONY: all init clean
+
+all: $(TARGET)
+
+$(TARGET): $(OBJS)
 	gcc $(OBJS) -o $@ $(LDFLAGS)
 
-$(HEADERS):
-	find "$(WINSDK)" -name "WinHvPlatform*" -exec cp {} . \;
+$(foreach SRC,$(SRCS),$(eval $(subst \,,$(shell $(CC) -MM $(SRC)))))
+
+init:
+	find "$(WINSDKDIR)" -name "WinHvPlatform*" -exec cp {} . \;
 
 clean:
-	rm -f $(TARGET) $(HEADERS)
+	rm -f $(TARGET) *.o
