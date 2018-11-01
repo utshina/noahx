@@ -8,7 +8,7 @@
 #include <elf.h>
 #include "vmm.h"
 
-#define OR ?:
+#define OR ?true:
 
 typedef struct {
 	Elf64_Ehdr *ehdr;
@@ -23,6 +23,16 @@ panic(char *msg)
 	fprintf(stderr, msg);
 	fprintf(stderr, "\n");
 	exit(EXIT_FAILURE);
+}
+
+static vmm_mmap_prot_t
+conv_prot(Elf64_Word flags)
+{
+	vmm_mmap_prot_t prot = 0;
+	if (flags & PF_X) prot |= VMM_MMAP_PROT_EXEC;
+	if (flags & PF_W) prot |= VMM_MMAP_PROT_WRITE;
+	if (flags & PF_R) prot |= VMM_MMAP_PROT_READ;
+	return prot;
 }
 
 void
@@ -50,32 +60,29 @@ map_file(elf_t *elf, vm_t *vm, char *filename)
 		panic("ELF is not an x64 executable");
 
 	vm->regs.rip = ehdr->e_entry;
-	printf("entry: %llx\n", vm->regs.rip);
 	int n = ehdr->e_phnum;
 	Elf64_Phdr *phdr = data + ehdr->e_phoff;
 	for (int i = 0; i < n; i++, phdr++) {
-		printf("p_type: %d\n", phdr->p_type);
 		switch (phdr->p_type) {
 		case PT_LOAD: {
 			void *segment = (void *)rounddown((uint64_t)data + phdr->p_offset, PAGE_SIZE_4K);
 			vmm_gphys_t vaddr = rounddown(phdr->p_vaddr, PAGE_SIZE_4K);
 			uint64_t size = roundup(vaddr + phdr->p_memsz, PAGE_SIZE_4K) - vaddr;
-			vmm_mmap(vm, segment, vaddr, size, VMM_MMAP_PROT_RWE);
+			vmm_mmap_prot_t prot = conv_prot(phdr->p_flags);
+			vmm_mmap(vm, segment, vaddr, size, prot);
 			if (elf->load_base == 0)
 				elf->load_base = phdr->p_vaddr - phdr->p_offset + elf->global_offset;
 			vm->heap_gvirt = roundup(max(vm->heap_gvirt, vaddr + size), PAGE_SIZE_4K);
-			printf("data: %p, offset:%x\n", data, phdr->p_offset);
-			printf("%p: %02x\n", segment, ((char *)segment)[0x950]);
 			break;
 		}
 
 		case PT_INTERP:
-			printf("interp: %s\n", data + phdr->p_offset);
+			printf("interp: %s\n", (char *)data + phdr->p_offset);
 			break;
 		}
 	}
-	void *heap = aligned_alloc(PAGE_SIZE_4K, 1 GiB);
-	vmm_mmap(vm, heap, vm->heap_gvirt, 1 GiB, VMM_MMAP_PROT_RW);
+	void *heap = aligned_alloc(PAGE_SIZE_4K, 128 KiB);
+	vmm_mmap(vm, heap, vm->heap_gvirt, 128 KiB, VMM_MMAP_PROT_RW);
 	close(fd);
 	elf->ehdr = ehdr;
 }
@@ -112,7 +119,6 @@ setup_stack(elf_t *elf, vm_t *vm)
 	char *argv[] = { arg, NULL, };
 	char env[] = "USER=shina";
 	char *envp[] = { env, NULL, };
-	uint64_t null = 0;
 
 	char random[16];
 	vmm_push(vm, random, sizeof(random));
@@ -129,14 +135,14 @@ setup_stack(elf_t *elf, vm_t *vm)
 
 	Elf64_Ehdr *ehdr = elf->ehdr;
 	Elf64_auxv_t auxv[] = {
-		{ AT_BASE, 0 },
-		{ AT_ENTRY, ehdr->e_entry + elf->global_offset },
-		{ AT_PHDR, elf->load_base + ehdr->e_phoff },
-		{ AT_PHENT, ehdr->e_phentsize },
-		{ AT_PHNUM, ehdr->e_phnum },
-		{ AT_PAGESZ, PAGE_SIZE_4K },
-		{ AT_RANDOM, rand_gvirt },
-		{ AT_NULL, 0 },
+		{ AT_BASE,  {0} },
+		{ AT_ENTRY, {ehdr->e_entry + elf->global_offset} },
+		{ AT_PHDR, {elf->load_base + ehdr->e_phoff} },
+		{ AT_PHENT, {ehdr->e_phentsize} },
+		{ AT_PHNUM, {ehdr->e_phnum} },
+		{ AT_PAGESZ, {PAGE_SIZE_4K} },
+		{ AT_RANDOM, {rand_gvirt} },
+		{ AT_NULL, {0} },
 	};
 	vmm_push(vm, auxv, sizeof(auxv));
 	vmm_push(vm, guest_envp, sizeof(guest_envp));

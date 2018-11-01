@@ -4,8 +4,6 @@
 #include <windows.h>
 #include "vmm.h"
 
-#define countof(a) (sizeof(a)/sizeof(a[0]))
-
 #define SUCCESS 0x80000000
 #define OR & SUCCESS ^ SUCCESS ?:
 
@@ -63,6 +61,26 @@ vmm_create_vm(vm_t *vm)
 
 	WHvSetupPartition(vm->handle)
 		OR panic("setup partition error");
+
+	vm->mmap_range_root = NULL;
+}
+
+static vmm_mmap_range_t *
+alloc_mmap_range(vmm_gvirt_t start, void *hvirt, size_t size)
+{
+	vmm_mmap_range_t *mmap_range = malloc(sizeof(vmm_mmap_range_t));
+	if (mmap_range == NULL)
+		panic("out of memory");
+	range_init(&mmap_range->range,  start, start + size);
+	mmap_range->hvirt = hvirt;
+	mmap_range->size = size;
+	return mmap_range;
+}
+
+static inline range_root_t
+get_mmap_range_root(vm_t *vm)
+{
+	return (range_root_t)&vm->mmap_range_root;
 }
 
 void
@@ -70,21 +88,36 @@ vmm_mmap(vm_t *vm, void *hvirt, vmm_gphys_t gphys, size_t size, vmm_mmap_prot_t 
 {
 	HRESULT hr;
 
-	printf("mmap: hvirt=%p, gphys=%llx, size=%llx, prot=%x\n",
+	printf("mmap: hvirt=%p, gphys=%lx, size=%lx, prot=%x\n",
 	       hvirt, gphys, size, prot);
 	hr = WHvMapGpaRange(vm->handle, hvirt, gphys, size, prot);
 	if (FAILED(hr))
 		panicw(hr, "user mmap error");
+
+	if (gphys < vm->kernel_gphys) {
+		vmm_mmap_range_t *mmap_range = alloc_mmap_range(gphys, hvirt, size);
+		range_insert(get_mmap_range_root(vm), &mmap_range->range);
+	}
 }
 
-char *p;
+void *
+vmm_gvirt_to_hvirt(vm_t *vm, vmm_gvirt_t gvirt)
+{
+	printf("root: %p, range: %p\n", &vm->mmap_range_root, &vm->mmap_range_root->range);
+	range_t *r = range_search_one(get_mmap_range_root(vm), gvirt);
+	if (r != NULL) {
+		vmm_mmap_range_t *mmap_range = (void *)r;
+		return mmap_range->hvirt + (gvirt - mmap_range->range.start);
+	}
+	return NULL;
+}
 
 void
 vmm_setup_vm(vm_t *vm)
 {
 	static const uint64_t KERNEL_OFFSET = 255 GiB;
 	vm->stack_top_gphys = KERNEL_OFFSET;
-	vm->stack_size = 1 GiB;
+	vm->stack_size = 1 MiB;
 	vm->kernel_gphys = KERNEL_OFFSET;
 	vm->kernel_size = 1 MiB;
 
@@ -121,17 +154,16 @@ void
 vmm_push(vm_t *vm, const void *data, size_t n)
 {
 	uint64_t remainder = roundup(n, 8) - n;
+	vm->regs.rsp -= (n + remainder);
 	void *sp = stack_gphys_to_hvirt(vm, vm->regs.rsp);
 	memcpy(sp, data, n);
 	memset(sp + n, 0, remainder);
-	vm->regs.rsp -= n;
+	fprintf(stderr, "push: %p(%lx)\n", sp, vm->regs.rsp);
 }
 
 void
 vmm_create_vcpu(vm_t *vm)
 {
-int i;
-
 	vm->vcpu_id = 0;
 	WHvCreateVirtualProcessor(vm->handle, vm->vcpu_id, 0)
 		OR panic("create virtual processor error");
@@ -214,7 +246,21 @@ vmm_get_regs(vm_t *vm, vmm_regs_t *regs, int count)
 		regs[i].value = regvalue[i];
 }
 
-bool
+void
+vmm_set_regs(vm_t *vm, vmm_regs_t *regs, int count)
+{
+	WHV_REGISTER_NAME *regname = alloca(sizeof(*regname) * count);
+	for (int i = 0; i < count; i++)
+		regname[i] = regs[i].name;
+	WHV_REGISTER_VALUE *regvalue = alloca(sizeof(*regvalue) * count);
+	for (int i = 0; i < count; i++)
+		regvalue[i] = regs[i].value;
+	WHvSetVirtualProcessorRegisters(
+		vm->handle, vm->vcpu_id, regname, count, regvalue)
+		OR panic("get virtual processor registers error");
+}
+
+void
 vmm_run(vm_t *vm)
 {
 	WHvRunVirtualProcessor(
