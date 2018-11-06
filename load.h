@@ -1,5 +1,12 @@
 #pragma once
 
-#include "vmm.h"
+#include "mm.h"
 
-void load_elf(vm_t *vm, char *filename);
+typedef struct {
+	mm_gvirt_t entry;
+	mm_gvirt_t stack;
+	mm_gvirt_t heap;
+} load_info_t;
+
+void
+ldr_load(mm_t *mm, int argc, char *argv[], load_info_t *info);

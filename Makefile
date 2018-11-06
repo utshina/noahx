@@ -1,6 +1,6 @@
 TARGET = noahx.exe
 CC = gcc
-CFLAGS = -std=c11 -I. -Wall -Wno-parentheses -Wno-unknown-pragmas
+CFLAGS = -std=c11 -I. -Wall -Werror -Wno-parentheses -Wno-unknown-pragmas
 LDFLAGS = -L/cygdrive/c/Windows/System32 -lWinHvPlatform
 WINSDKDIR = /cygdrive/c/Program Files (x86)/Windows Kits/10/Include
 HEADERS = WinHvPlatform.h WinHvPlatformDefs.h

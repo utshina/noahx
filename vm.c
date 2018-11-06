@@ -1,25 +1,21 @@
+#include <windows.h>
+#include <assert.h>
 #include <stdio.h>
 #include <stdnoreturn.h>
 #include <alloca.h>
-#include <windows.h>
-#include "vmm.h"
+#include "panic.h"
+#include "vm.h"
 
 #define SUCCESS 0x80000000
+#undef OR
 #define OR & SUCCESS ^ SUCCESS ?:
 
-noreturn static void
-panic(char *msg)
-{
-	fprintf(stderr, "vmm: ");
-	fprintf(stderr, msg);
-	fprintf(stderr, "\n");
-	exit(EXIT_FAILURE);
-}
+static bool initialized = false;
 
-noreturn static void
+noreturn void
 panicw(HRESULT result, char *msg)
 {
-	fprintf(stderr, "vmm: ");
+	fprintf(stderr, "vm: ");
 	fprintf(stderr, msg);
 	fprintf(stderr, "\n");
 	LPVOID lpMsgBuf;
@@ -33,7 +29,7 @@ panicw(HRESULT result, char *msg)
 	exit(EXIT_FAILURE);
 }
 
-void
+static void
 vmm_init(void)
 {
 	UINT32 size;
@@ -47,8 +43,14 @@ vmm_init(void)
 }
 
 void
-vmm_create_vm(vm_t *vm)
+vm_create(vm_t *vm)
 {
+	if (!initialized) {
+		vmm_init();
+		initialized = true;
+	}
+
+	assert(vm != NULL);
 	WHvCreatePartition(&vm->handle)
 		OR panic("create partition error");
 
@@ -61,57 +63,22 @@ vmm_create_vm(vm_t *vm)
 
 	WHvSetupPartition(vm->handle)
 		OR panic("setup partition error");
-
-	vm->mmap_range_root = NULL;
-}
-
-static vmm_mmap_range_t *
-alloc_mmap_range(vmm_gvirt_t start, void *hvirt, size_t size)
-{
-	vmm_mmap_range_t *mmap_range = malloc(sizeof(vmm_mmap_range_t));
-	if (mmap_range == NULL)
-		panic("out of memory");
-	range_init(&mmap_range->range,  start, start + size);
-	mmap_range->hvirt = hvirt;
-	mmap_range->size = size;
-	return mmap_range;
-}
-
-static inline range_root_t
-get_mmap_range_root(vm_t *vm)
-{
-	return (range_root_t)&vm->mmap_range_root;
 }
 
 void
-vmm_mmap(vm_t *vm, void *hvirt, vmm_gphys_t gphys, size_t size, vmm_mmap_prot_t prot)
+vm_mmap(vm_t *vm, vm_gphys_t gphys, void *hvirt, size_t size, vm_mmap_prot_t prot)
 {
 	HRESULT hr;
 
+	assert(vm != NULL);
 	printf("mmap: hvirt=%p, gphys=%lx, size=%lx, prot=%x\n",
-	       hvirt, gphys, size, prot);
+		hvirt, gphys, size, prot);
 	hr = WHvMapGpaRange(vm->handle, hvirt, gphys, size, prot);
 	if (FAILED(hr))
 		panicw(hr, "user mmap error");
-
-	if (gphys < vm->kernel_gphys) {
-		vmm_mmap_range_t *mmap_range = alloc_mmap_range(gphys, hvirt, size);
-		range_insert(get_mmap_range_root(vm), &mmap_range->range);
-	}
 }
 
-void *
-vmm_gvirt_to_hvirt(vm_t *vm, vmm_gvirt_t gvirt)
-{
-	printf("root: %p, range: %p\n", &vm->mmap_range_root, &vm->mmap_range_root->range);
-	range_t *r = range_search_one(get_mmap_range_root(vm), gvirt);
-	if (r != NULL) {
-		vmm_mmap_range_t *mmap_range = (void *)r;
-		return mmap_range->hvirt + (gvirt - mmap_range->range.start);
-	}
-	return NULL;
-}
-
+#if 0
 void
 vmm_setup_vm(vm_t *vm)
 {
@@ -149,30 +116,28 @@ vmm_setup_vm(vm_t *vm)
 	vm->kernel->gdt[1] = 0x00a0fa000000ffff; // user code
 	vm->kernel->gdt[2] = 0x00c0f2000000ffff; // user data
 }
+#endif
 
 void
-vmm_push(vm_t *vm, const void *data, size_t n)
+vm_create_vcpu(vm_t *vm, vcpu_t *vcpu)
 {
-	uint64_t remainder = roundup(n, 8) - n;
-	vm->regs.rsp -= (n + remainder);
-	void *sp = stack_gphys_to_hvirt(vm, vm->regs.rsp);
-	memcpy(sp, data, n);
-	memset(sp + n, 0, remainder);
-	fprintf(stderr, "push: %p(%lx)\n", sp, vm->regs.rsp);
+	static UINT16 vcpu_id = 0;
+
+	vcpu->vm = vm;
+	vcpu->id = vcpu_id++;
+	WHvCreateVirtualProcessor(vm->handle, vcpu->id, 0)
+		OR panic("create virtual processor error");
 }
 
 void
-vmm_create_vcpu(vm_t *vm)
+vcpu_init_sysregs(vcpu_t *vcpu, vcpu_sysregs_t *sysregs)
 {
-	vm->vcpu_id = 0;
-	WHvCreateVirtualProcessor(vm->handle, vm->vcpu_id, 0)
-		OR panic("create virtual processor error");
+	vm_t *vm = vcpu->vm;
 
-	enum regs {
-		Cr0 = 0, Cr3, Cr4, Efer, Idtr, Gdtr, Tr,
-		Cs, Rip, Ss, Rsp, Rbp, Ds, Es, Fs, Gs,
+	enum {
+		Cr0, Cr3, Cr4, Efer, Gdtr, Idtr, Tr,
+		Cs, Ss, Ds, Es, Fs, Gs,
 	};
-
 	WHV_REGISTER_NAME regname[] = {
 #define REGNAME_ENTRY(reg) [reg] = WHvX64Register##reg
 		REGNAME_ENTRY(Cr0),
@@ -183,10 +148,7 @@ vmm_create_vcpu(vm_t *vm)
 		REGNAME_ENTRY(Gdtr),
 		REGNAME_ENTRY(Tr),
 		REGNAME_ENTRY(Cs),
-		REGNAME_ENTRY(Rip),
 		REGNAME_ENTRY(Ss),
-		REGNAME_ENTRY(Rsp),
-		REGNAME_ENTRY(Rbp),
 		REGNAME_ENTRY(Ds),
 		REGNAME_ENTRY(Es),
 		REGNAME_ENTRY(Fs),
@@ -194,19 +156,27 @@ vmm_create_vcpu(vm_t *vm)
 	};
 	WHV_REGISTER_VALUE regvalue[countof(regname)];
 	WHvGetVirtualProcessorRegisters(
-		vm->handle, vm->vcpu_id, regname, countof(regname), regvalue)
+		vm->handle, vcpu->id, regname, countof(regname), regvalue)
 		OR panic("get virtual processor registers error");
 
+	static const uint64_t CR0_PE = 1ULL << 0;
+	static const uint64_t CR0_PG = 1ULL << 31;
+	static const uint64_t CR4_PSE = 1ULL << 4;
+	static const uint64_t CR4_PAE = 1ULL << 5;
+	static const uint64_t CR4_PGE = 1ULL << 7;
+	static const uint64_t EFER_LME = 1ULL << 8;
+	static const uint64_t EFER_LMA = 1ULL << 10;
+
 	regvalue[Cr0].Reg64 |= (CR0_PE | CR0_PG);
-	regvalue[Cr3].Reg64 = kernel_hvirt_to_gphys(vm, vm->kernel->pml4);
-	regvalue[Cr4].Reg64 |= (CR4_PSE | CR4_PAE);
+	regvalue[Cr3].Reg64 = sysregs->cr3;
+	regvalue[Cr4].Reg64 |= (CR4_PSE | CR4_PAE | CR4_PGE);
 	regvalue[Efer].Reg64 |= (EFER_LME | EFER_LMA);
-	regvalue[Idtr].Table.Base = kernel_hvirt_to_gphys(vm, vm->kernel->idt);
-	regvalue[Idtr].Table.Limit = 8 * 256 - 1;
-	regvalue[Gdtr].Table.Base = kernel_hvirt_to_gphys(vm, vm->kernel->gdt);
-	regvalue[Gdtr].Table.Limit = 0x17;
-	regvalue[Tr].Segment.Base = kernel_hvirt_to_gphys(vm, vm->kernel->tss);
-	regvalue[Tr].Segment.Limit = 0xffff;
+	regvalue[Gdtr].Table.Base = sysregs->gdt_base;
+	regvalue[Gdtr].Table.Limit = sysregs->gdt_limit;
+	regvalue[Idtr].Table.Base = sysregs->idt_base;
+	regvalue[Idtr].Table.Limit = sysregs->idt_limit;
+	regvalue[Tr].Segment.Base = sysregs->tss_base;
+	regvalue[Tr].Segment.Limit = sysregs->tss_limit;
 	regvalue[Tr].Segment.Selector = 0x10;
 	regvalue[Tr].Segment.Attributes = 0x808b;
 	WHV_X64_SEGMENT_REGISTER CodeSegment = {
@@ -214,10 +184,6 @@ vmm_create_vcpu(vm_t *vm)
 		.Selector = 0x08, .Attributes = 0xa0fb,
 	};
 	regvalue[Cs].Segment = CodeSegment;
-	regvalue[Rip].Reg64 = vm->regs.rip;
-	printf("%llx\n", regvalue[Rip].Reg64);
-	regvalue[Rsp].Reg64 = vm->regs.rsp;
-	regvalue[Rbp].Reg64 = vm->regs.rsp;
 	WHV_X64_SEGMENT_REGISTER DataSegment = {
 		.Base = 0, .Limit = 0xffff,
 		.Selector = 0x10, .Attributes = 0xc0f3,
@@ -228,43 +194,48 @@ vmm_create_vcpu(vm_t *vm)
 	regvalue[Fs].Segment = DataSegment;
 	regvalue[Gs].Segment = DataSegment;
 	WHvSetVirtualProcessorRegisters(
-		vm->handle, vm->vcpu_id, regname, countof(regname), regvalue)
+		vm->handle, vcpu->id, regname, countof(regname), regvalue)
 		OR panic("set virtual processor registers error");
 }
 
 void
-vmm_get_regs(vm_t *vm, vmm_regs_t *regs, int count)
+vcpu_get_regs(vcpu_t *vcpu, vcpu_regs_t *regs, int count)
 {
-	WHV_REGISTER_NAME *regname = alloca(sizeof(*regname) * count);
-	WHV_REGISTER_VALUE *regvalue = alloca(sizeof(*regvalue) * count);
+	WHV_REGISTER_NAME regname[sizeof(WHV_REGISTER_NAME) * count];
+	WHV_REGISTER_VALUE regvalue[sizeof(WHV_REGISTER_VALUE) * count];
+
 	for (int i = 0; i < count; i++)
 		regname[i] = regs[i].name;
 	WHvGetVirtualProcessorRegisters(
-		vm->handle, vm->vcpu_id, regname, count, regvalue)
+		vcpu->vm->handle, vcpu->id, regname, count, regvalue)
 		OR panic("get virtual processor registers error");
 	for (int i = 0; i < count; i++)
-		regs[i].value = regvalue[i];
+		printf("%d: %llx\n", i, regvalue[i].Reg64);
+	for (int i = 0; i < count; i++)
+		*regs[i].ptr = regvalue[i].Reg64;
 }
 
 void
-vmm_set_regs(vm_t *vm, vmm_regs_t *regs, int count)
+vcpu_set_regs(vcpu_t *vcpu, vcpu_regs_t *regs, int count)
 {
-	WHV_REGISTER_NAME *regname = alloca(sizeof(*regname) * count);
+	WHV_REGISTER_NAME regname[sizeof(WHV_REGISTER_NAME) * count];
+	WHV_REGISTER_VALUE regvalue[sizeof(WHV_REGISTER_VALUE) * count];
+
 	for (int i = 0; i < count; i++)
 		regname[i] = regs[i].name;
-	WHV_REGISTER_VALUE *regvalue = alloca(sizeof(*regvalue) * count);
 	for (int i = 0; i < count; i++)
-		regvalue[i] = regs[i].value;
+		regvalue[i].Reg64 = regs[i].value;
 	WHvSetVirtualProcessorRegisters(
-		vm->handle, vm->vcpu_id, regname, count, regvalue)
-		OR panic("get virtual processor registers error");
+		vcpu->vm->handle, vcpu->id, regname, count, regvalue)
+		OR panic("set virtual processor registers error");
 }
 
 void
-vmm_run(vm_t *vm)
+vcpu_run(vcpu_t *vcpu)
 {
+	vm_t *vm = vcpu->vm;
 	WHvRunVirtualProcessor(
-		vm->handle, vm->vcpu_id,
+		vm->handle, vcpu->id,
 		&vm->exit_context, sizeof(vm->exit_context))
 		OR panic("run virtual processor error");
 }

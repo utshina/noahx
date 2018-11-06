@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <stddef.h>
 #include "range.h"
 
@@ -9,7 +10,6 @@ range_search_internal(range_root_t root, uint64_t start, uint64_t end, range_t *
 
 	while (r) {
 		*parent = r;
-		printf("%llx-%llx v.s. %llx-%llx\n", start, end, r->start, r->end);
 		if (r->end <= start)
 			n = 1, r = r->right;
 		else if (end <= r->start)
@@ -45,18 +45,24 @@ range_insert(range_root_t root, range_t *range)
 	return NULL;
 }
 
+static int depth = 0;
 void
-range_print(range_root_t root)
+do_range_print(range_t *range)
 {
-	static int depth = 0;
-	range_t *range = *root;
 	if (range->left) {
-		depth++; range_print(range->left); depth--;
+		depth++; do_range_print(range->left); depth--;
 	}
 	printf("%*c%08lx-%08lx\n", 4 * depth, ' ', range->start, range->end);
 	if (range->right) {
-		depth++; range_print(range->right); depth--;
+		depth++; do_range_print(range->right); depth--;
 	}
+}
+
+void
+range_print(range_root_t root)
+{
+	depth = 0;
+	do_range_print(*root);
 }
 
 

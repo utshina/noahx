@@ -1,95 +1,32 @@
 #include <stdio.h>
-#include <stdnoreturn.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <elf.h>
-#include "vmm.h"
-
-#define OR ?true:
+#include "load.h"
+#include "panic.h"
 
 typedef struct {
-	Elf64_Ehdr *ehdr;
-	uint64_t global_offset;
-	uint64_t load_base;
+	uint64_t entry;
+	uint64_t phdr;
+	uint64_t phent;
+	uint64_t phnum;
 } elf_t;
 
-noreturn static int
-panic(char *msg)
+static void
+push(mm_t *mm, uint64_t *rsp, const void *data, size_t n)
 {
-	fprintf(stderr, "loader: ");
-	fprintf(stderr, msg);
-	fprintf(stderr, "\n");
-	exit(EXIT_FAILURE);
+	uint64_t remainder = roundup(n, 8) - n;
+	*rsp -= (n + remainder);
+	void *sp = mm_stack_gvirt_to_hvirt(mm, *rsp);
+	memcpy(sp, data, n);
+	memset(sp + n, 0, remainder);
 }
-
-static vmm_mmap_prot_t
-conv_prot(Elf64_Word flags)
-{
-	vmm_mmap_prot_t prot = 0;
-	if (flags & PF_X) prot |= VMM_MMAP_PROT_EXEC;
-	if (flags & PF_W) prot |= VMM_MMAP_PROT_WRITE;
-	if (flags & PF_R) prot |= VMM_MMAP_PROT_READ;
-	return prot;
-}
-
-void
-map_file(elf_t *elf, vm_t *vm, char *filename)
-{
-	int fd = open(filename, O_RDONLY, 0);
-	if (fd < 0)
-		panic("can't open file");
-
-	struct stat stat;
-	fstat(fd, &stat) == 0 OR panic("fstat");
-
-	void *data = mmap(NULL, stat.st_size, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_PRIVATE, fd, 0);
-	if (data == MAP_FAILED)
-		panic("mmap");
-
-	Elf64_Ehdr *ehdr = data;
-	uint8_t valid_ident[] = {0x7f, 'E', 'L', 'F', 0x02, 0x01, 0x01};
-	memcmp(ehdr->e_ident, valid_ident, sizeof(valid_ident)) == 0
-		OR panic("ELF header is invalid");
-
-	if (!(ehdr->e_type == ET_EXEC || ehdr->e_type == ET_DYN))
-		panic("ELF is not a supported type");
-	if (ehdr->e_machine != EM_X86_64)
-		panic("ELF is not an x64 executable");
-
-	vm->regs.rip = ehdr->e_entry;
-	int n = ehdr->e_phnum;
-	Elf64_Phdr *phdr = data + ehdr->e_phoff;
-	for (int i = 0; i < n; i++, phdr++) {
-		switch (phdr->p_type) {
-		case PT_LOAD: {
-			void *segment = (void *)rounddown((uint64_t)data + phdr->p_offset, PAGE_SIZE_4K);
-			vmm_gphys_t vaddr = rounddown(phdr->p_vaddr, PAGE_SIZE_4K);
-			uint64_t size = roundup(vaddr + phdr->p_memsz, PAGE_SIZE_4K) - vaddr;
-			vmm_mmap_prot_t prot = conv_prot(phdr->p_flags);
-			vmm_mmap(vm, segment, vaddr, size, prot);
-			if (elf->load_base == 0)
-				elf->load_base = phdr->p_vaddr - phdr->p_offset + elf->global_offset;
-			vm->heap_gvirt = roundup(max(vm->heap_gvirt, vaddr + size), PAGE_SIZE_4K);
-			break;
-		}
-
-		case PT_INTERP:
-			printf("interp: %s\n", (char *)data + phdr->p_offset);
-			break;
-		}
-	}
-	void *heap = aligned_alloc(PAGE_SIZE_4K, 128 KiB);
-	vmm_mmap(vm, heap, vm->heap_gvirt, 128 KiB, VMM_MMAP_PROT_RW);
-	close(fd);
-	elf->ehdr = ehdr;
-}
-
 
 static void
-push_strings(vm_t *vm, int count, char **vector, vmm_gvirt_t *gvbuf)
+push_strings(mm_t *mm, uint64_t *rsp, int count, char **vector, mm_gvirt_t *gvbuf)
 {
 	int size = 0;
 	int offset[count + 1];
@@ -104,16 +41,16 @@ push_strings(vm_t *vm, int count, char **vector, vmm_gvirt_t *gvbuf)
 	for (int i = 0; i < count; i++)
 		strcpy(&buf[offset[i]], vector[i]);
 
-	vmm_push(vm, buf, size);
-	vmm_gvirt_t stack_gvirt = vm->regs.rsp;
+	push(mm, rsp, buf, size);
 	for (int i = 0; i < count; i++)
-		gvbuf[i] = stack_gvirt + offset[i];
+		gvbuf[i] = *rsp + offset[i];
 	gvbuf[count] = 0;
 }
 
-void
-setup_stack(elf_t *elf, vm_t *vm)
+static void
+setup_stack(elf_t *elf, mm_t *mm, load_info_t *info)
 {
+	mm_gvirt_t *rsp = &info->stack;
 	int argc = 1;
 	char arg[] = "/bin/ls";
 	char *argv[] = { arg, NULL, };
@@ -121,44 +58,110 @@ setup_stack(elf_t *elf, vm_t *vm)
 	char *envp[] = { env, NULL, };
 
 	char random[16];
-	vmm_push(vm, random, sizeof(random));
-	vmm_gvirt_t rand_gvirt = vm->regs.rsp;
+	push(mm, rsp, random, sizeof(random));
+	mm_gvirt_t rand_gvirt = *rsp;
 
 	int envc = 0;
 	for (char **v = envp; *v != NULL; v++)
 		envc++;
-	vmm_gvirt_t guest_envp[envc + 1];
-	push_strings(vm, envc, envp, guest_envp);
+	mm_gvirt_t guest_envp[envc + 1];
+	push_strings(mm, rsp, envc, envp, guest_envp);
 
-	vmm_gvirt_t guest_argv[argc + 1];
-	push_strings(vm, argc, argv, guest_argv);
+	mm_gvirt_t guest_argv[argc + 1];
+	push_strings(mm, rsp, argc, argv, guest_argv);
 
-	Elf64_Ehdr *ehdr = elf->ehdr;
 	Elf64_auxv_t auxv[] = {
 		{ AT_BASE,  {0} },
-		{ AT_ENTRY, {ehdr->e_entry + elf->global_offset} },
-		{ AT_PHDR, {elf->load_base + ehdr->e_phoff} },
-		{ AT_PHENT, {ehdr->e_phentsize} },
-		{ AT_PHNUM, {ehdr->e_phnum} },
+		{ AT_ENTRY, { elf->entry } },
+		{ AT_PHDR, { elf->phdr } },
+		{ AT_PHENT, { elf->phent } },
+		{ AT_PHNUM, { elf->phnum } },
 		{ AT_PAGESZ, {PAGE_SIZE_4K} },
 		{ AT_RANDOM, {rand_gvirt} },
 		{ AT_NULL, {0} },
 	};
-	vmm_push(vm, auxv, sizeof(auxv));
-	vmm_push(vm, guest_envp, sizeof(guest_envp));
-	vmm_push(vm, guest_argv, sizeof(guest_argv));
-	vmm_push(vm, &argc, sizeof(argc));
+	push(mm, rsp, auxv, sizeof(auxv));
+	push(mm, rsp, guest_envp, sizeof(guest_envp));
+	push(mm, rsp, guest_argv, sizeof(guest_argv));
+	push(mm, rsp, &argc, sizeof(argc));
+}
+
+static mm_mmap_prot_t
+conv_prot(Elf64_Word flags)
+{
+	mm_mmap_prot_t prot = 0;
+	if (flags & PF_X) prot |= MM_MMAP_PROT_EXEC;
+	if (flags & PF_W) prot |= MM_MMAP_PROT_WRITE;
+	if (flags & PF_R) prot |= MM_MMAP_PROT_READ;
+	return prot;
+}
+
+static void
+map_elf_file(elf_t *elf, mm_t *mm, char *filename, load_info_t *info)
+{
+	int fd = open(filename, O_RDONLY, 0);
+	if (fd < 0)
+		panic("can't open file");
+
+	struct stat statbuf;
+	fstat(fd, &statbuf) == 0
+		OR panic("can't stat");
+
+	void *data = mmap(NULL, statbuf.st_size, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_PRIVATE, fd, 0);
+	if (data == MAP_FAILED)
+		perror("mmap"), panic("mmap failed");
+
+	Elf64_Ehdr *ehdr = data;
+	uint8_t valid_ident[] = {0x7f, 'E', 'L', 'F', 0x02, 0x01, 0x01};
+	memcmp(ehdr->e_ident, valid_ident, sizeof(valid_ident)) == 0
+		OR panic("ELF header is invalid");
+	if (!(ehdr->e_type == ET_EXEC || ehdr->e_type == ET_DYN))
+		panic("ELF is not a supported type");
+	if (ehdr->e_machine != EM_X86_64)
+		panic("ELF is not an x64 executable");
+
+	info->entry = elf->entry = ehdr->e_entry;
+
+	int n = ehdr->e_phnum;
+	Elf64_Phdr *phdr = data + ehdr->e_phoff;
+
+	mm_gvirt_t heap = 0;
+	uint64_t load_base = 0;
+	for (int i = 0; i < n; i++) {
+		switch (phdr[i].p_type) {
+		case PT_LOAD: {
+			off_t offset = rounddown(phdr[i].p_offset, PAGE_SIZE_4K);
+			mm_gvirt_t gvirt = rounddown(phdr[i].p_vaddr, PAGE_SIZE_4K);
+			void *hvirt = data + offset;
+			uint64_t size = roundup(gvirt + phdr[i].p_memsz, PAGE_SIZE_4K) - gvirt;
+			mm_mmap_prot_t prot = conv_prot(phdr[i].p_flags);
+			mm_mmap(mm, gvirt, hvirt, size, prot, MM_MMAP_TYPE_MMAP);
+
+			if (load_base == 0)
+				load_base = phdr[i].p_vaddr - phdr[i].p_offset;
+			heap = roundup(max(heap, gvirt + size), PAGE_SIZE_4K);
+			break;
+		}
+
+		case PT_INTERP:
+			printf("interp\n");
+			break;
+		}
+	}
+
+	info->heap = heap;
+	elf->phdr = load_base + ehdr->e_phoff;
+	elf->phent = ehdr->e_phentsize;
+	elf->phnum = ehdr->e_phnum;
+	close(fd);
+
 }
 
 void
-load_elf(vm_t *vm, char *filename)
+ldr_load(mm_t *mm, int argc, char *argv[], load_info_t *info)
 {
-	elf_t elf = {
-		.ehdr = NULL,
-		.global_offset = 0,
-		.load_base = 0,
-	};
-
-	map_file(&elf, vm, filename);
-	setup_stack(&elf, vm);
+	elf_t elf;
+	info->stack = mm_get_stack_top(mm);
+	map_elf_file(&elf, mm, argv[0], info);
+	setup_stack(&elf, mm, info);
 }

@@ -1,29 +1,31 @@
-#include "vmm.h"
+#include <stdio.h>
+#include "vm.h"
 #include "syscall.h"
 #include "linux.h"
 
-uint64_t
-handle_syscall(vm_t *vm)
+int
+brk(void *addr)
 {
-	enum { RAX = 0, RDI, RSI, RDX, R10, R8, R9 };
-	vmm_regs_t regs[] = {
-		REGS_ENTRY_GET(RAX),
-		REGS_ENTRY_GET(RDI),
-		REGS_ENTRY_GET(RSI),
-		REGS_ENTRY_GET(RDX),
-		REGS_ENTRY_GET(R10),
-		REGS_ENTRY_GET(R8),
-		REGS_ENTRY_GET(R9),
-	};
-	vmm_get_regs(vm, regs, countof(regs));
+	printf("brk: %p\n", addr);
+	return -1;
+}
 
-	uint64_t rax = regs[RAX].value.Reg64;
-	switch (rax) {
+int
+handle_syscall(vm_t *vm, uint64_t sysnum, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5, uint64_t arg6)
+{
+	printf("syscall(%ld)(%lx,%lx,%lx)\n", sysnum, arg1, arg2, arg3);
+	switch (sysnum) {
+		case LINUX_sys_brk:
+		return brk((void *)arg1);
+
+	case LINUX_sys_getuid:
+	case LINUX_sys_getgid:
 	case LINUX_sys_geteuid:
-		printf("geteuid\n");
-		return 501;
+	case LINUX_sys_getegid:
+		return 1000;
 
 	default:
-		printf("unimplemented syscall: %lx\n", rax);
+		printf("unimplemented syscall: %ld\n", sysnum);
+		return -1;
 	}
 }

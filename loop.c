@@ -1,16 +1,65 @@
 #include <stdio.h>
-#include "vmm.h"
+#include "process.h"
+#include "mm.h"
 #include "syscall.h"
+#include "dump.h"
+
+static char *
+get_exit_reason_str(int reason)
+{
+	switch (reason) {
+		case WHvRunVpExitReasonNone:
+		return "none";
+		case WHvRunVpExitReasonMemoryAccess:
+		return "memory";
+		case WHvRunVpExitReasonUnrecoverableException:
+		return "exception";
+		default:
+		return "undefined";
+	}
+}
 
 void
-handle_vmexit(vm_t *vm)
+handle_vmexit(process_t *process)
 {
-	printf("exit reason: %x\n", vm->exit_context.ExitReason);
+	mm_t *mm = &process->mm;
+	vm_t *vm = &process->vm;
+	vcpu_t *vcpu = &process->thread->vcpu;
+	int reason = vm->exit_context.ExitReason;
+	if (reason == WHvRunVpExitReasonUnrecoverableException) {
+		uint16_t *inst = mm_gvirt_to_hvirt(mm, vm->exit_context.VpContext.Rip);
+		if (*inst == 0x050f) { // syscall
+			vcpu_regvalue_t rip, rax, rdi, rsi, rdx, r10, r8, r9;
+			vcpu_regs_t regs1[] = {
+				VCPU_REGS_ENTRY_GET(RAX, &rax),
+				VCPU_REGS_ENTRY_GET(RDI, &rdi),
+				VCPU_REGS_ENTRY_GET(RSI, &rsi),
+				VCPU_REGS_ENTRY_GET(RDX, &rdx),
+				VCPU_REGS_ENTRY_GET(R10, &r10),
+				VCPU_REGS_ENTRY_GET(R8, &r8),
+				VCPU_REGS_ENTRY_GET(R9, &r9),
+			};
+			vcpu_get_regs(vcpu, regs1, countof(regs1));
+
+			rax = handle_syscall(vm, rax, rdi, rsi, rdx, r10, r8, r9);
+
+			rip = vm->exit_context.VpContext.Rip + 2;
+			vcpu_regs_t regs2[] = {
+				VCPU_REGS_ENTRY_SET(RIP, rip),
+				VCPU_REGS_ENTRY_SET(RAX, rax),
+			};
+			vcpu_set_regs(vcpu, regs2, countof(regs2));
+			vm->in_operation = true;
+			return;
+		}
+	}
+
+	vm->in_operation = false;
+	printf("exit reason: %s (%x)\n", get_exit_reason_str(reason), reason);
 	printf("state: %x\n", vm->exit_context.VpContext.ExecutionState.AsUINT16);
 	printf("cs: %x\n", vm->exit_context.VpContext.Cs.Selector);
 	printf("rip: %llx\n", vm->exit_context.VpContext.Rip);
 
-	vm->in_operation = false;
 	switch(vm->exit_context.ExitReason) {
 	case WHvRunVpExitReasonMemoryAccess:
 		printf("inst: %02x %02x %02x %02x\n",
@@ -22,12 +71,14 @@ handle_vmexit(vm_t *vm)
 		printf("access info: %x\n", vm->exit_context.MemoryAccess.AccessInfo.AsUINT32);
 		printf("gpa: %llx\n", vm->exit_context.MemoryAccess.Gpa);
 		printf("gva: %llx\n", vm->exit_context.MemoryAccess.Gva);
-		enum { RSP };
-		vmm_regs_t regs[] = {
-			REGS_ENTRY_GET(RSP),
+#if 0
+		vcpu_regvalue_t rsp;
+		vcpu_regs_t regs[] = {
+			VCPU_REGS_ENTRY_GET(RSP, &rsp),
 		};
-		vmm_get_regs(vm, regs, countof(regs));
-		dump_guest_stack(vm, regs[RSP].value.Reg64);
+		vcpu_get_regs(vcpu, regs, countof(regs));
+		dump_guest_stack(mm, rsp);
+#endif
 		break;
 
 	case WHvRunVpExitReasonUnrecoverableException:
@@ -37,27 +88,14 @@ handle_vmexit(vm_t *vm)
 		printf("inst count: %d\n", vm->exit_context.VpException.InstructionByteCount);
 		printf("parameter: %llx\n", vm->exit_context.VpException.ExceptionParameter);
 
-		char *p = vmm_gvirt_to_hvirt(vm, vm->exit_context.VpContext.Rip);
+		char *p = mm_gvirt_to_hvirt(mm, vm->exit_context.VpContext.Rip);
 		if (p != NULL)
 			printf("inst: %02x %02x\n", *p, *(p+1));
 
-		uint16_t *inst = vmm_gvirt_to_hvirt(vm, vm->exit_context.VpContext.Rip);
-		if (*inst == 0x050f) { // syscall
-			WHV_REGISTER_VALUE rax, rip;
-			rax.Reg64 = handle_syscall(vm);
-			rip.Reg64 = vm->exit_context.VpContext.Rip + 2;
-			enum { RIP = 0, RAX };
-			vmm_regs_t regs[] = {
-				REGS_ENTRY_SET(RIP, rip),
-				REGS_ENTRY_SET(RAX, rax),
-			};
-			printf("rip: %llx, %llx\n", rip, regs[0].value.Reg64);
-			vmm_set_regs(vm, regs, countof(regs));
-			vm->in_operation = true;
-		}
-		break;
+
 
 	default:
 		;
 	}
+	return;
 }

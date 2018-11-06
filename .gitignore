@@ -1,3 +1,6 @@
 *.o
 *.exe
 *.stackdump
+*.out
+WinHvPlatform.h
+WinHVPlatformDefs.h
