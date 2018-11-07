@@ -4,7 +4,7 @@
 #include "mm.h"
 #include "vm.h"
 
-typedef struct {
+typedef struct process {
 	int thread_count, thread_count_max;
 	thread_t *thread;
 	mm_t mm;

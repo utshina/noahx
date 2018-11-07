@@ -1,6 +1,6 @@
 #pragma once
 
-#include "process.h"
+#include "thread.h"
 
 void
-handle_vmexit(process_t *process);
+handle_vmexit(thread_t *thread);

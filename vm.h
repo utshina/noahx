@@ -8,7 +8,6 @@
 typedef uint64_t vm_gphys_t;
 
 typedef struct {
-	bool in_operation;
 	WHV_PARTITION_HANDLE handle;
 	WHV_RUN_VP_EXIT_CONTEXT exit_context;
 } vm_t;
@@ -24,6 +23,7 @@ void
 vm_mmap(vm_t *vm, vm_gphys_t gphys, void *hvirt, size_t size, vm_mmap_prot_t prot);
 
 typedef struct {
+	bool in_operation;
 	vm_t *vm;
 	UINT32 id;
 } vcpu_t;
@@ -65,6 +65,9 @@ typedef enum {
 	VCPU_REG_R15 = WHvX64RegisterR15,
 	VCPU_REG_RIP = WHvX64RegisterRip,
 	VCPU_REG_RFLAGS = WHvX64RegisterRflags,
+
+	VCPU_SEG_FS = WHvX64RegisterFs,
+	VCPU_SEG_GS = WHvX64RegisterGs,
 } vcpu_regname_t;
 typedef uint64_t vcpu_regvalue_t;
 typedef struct {
@@ -81,6 +84,8 @@ void
 vcpu_get_regs(vcpu_t *vcpu, vcpu_regs_t *regs, int count);
 void
 vcpu_set_regs(vcpu_t *vcpu, vcpu_regs_t *regs, int count);
+void
+vcpu_set_segbase(vcpu_t *vcpu, int seg, uint64_t base);
 
 #if 0
 static inline void *

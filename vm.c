@@ -231,6 +231,19 @@ vcpu_set_regs(vcpu_t *vcpu, vcpu_regs_t *regs, int count)
 }
 
 void
+vcpu_set_segbase(vcpu_t *vcpu, int seg, uint64_t base)
+{
+	WHV_REGISTER_NAME regname[1];
+	WHV_REGISTER_VALUE regvalue[1] = {0};
+
+	regname[0] = seg;
+	regvalue[0].Segment.Base = base;
+	WHvSetVirtualProcessorRegisters(
+		vcpu->vm->handle, vcpu->id, regname, 1, regvalue)
+		OR panic("set virtual processor registers error");
+}
+
+void
 vcpu_run(vcpu_t *vcpu)
 {
 	vm_t *vm = vcpu->vm;

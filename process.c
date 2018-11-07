@@ -18,7 +18,7 @@ process_create(process_t *process)
 	process->thread = calloc(process->thread_count_max, sizeof(thread_t));
 	if (process->thread == NULL)
 		panic("out of memory");
-	thread_create(&process->thread[0], &process->vm);
+	thread_create(&process->thread[0], process);
 }
 
 void
@@ -38,8 +38,5 @@ void
 process_run(process_t *process)
 {
 	// mm_dump_range_tree(&process->mm);
-	do {
-		vcpu_run(&process->thread->vcpu);
-		handle_vmexit(process);
-	} while (process->vm.in_operation);
+	thread_run(&process->thread[0]);
 }

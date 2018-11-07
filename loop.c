@@ -20,11 +20,12 @@ get_exit_reason_str(int reason)
 	}
 }
 
-void handle_vmexit(process_t *process)
+void handle_vmexit(thread_t *thread)
 {
-	mm_t *mm = &process->mm;
-	vm_t *vm = &process->vm;
-	vcpu_t *vcpu = &process->thread->vcpu;
+	vcpu_t *vcpu = &thread->vcpu;
+	mm_t *mm = &thread->process->mm;
+	vm_t *vm = vcpu->vm;
+
 	int reason = vm->exit_context.ExitReason;
 	if (reason == WHvRunVpExitReasonUnrecoverableException)
 	{
@@ -43,7 +44,7 @@ void handle_vmexit(process_t *process)
 			};
 			vcpu_get_regs(vcpu, regs1, countof(regs1));
 
-			rax = handle_syscall(process, rax, rdi, rsi, rdx, r10, r8, r9);
+			rax = handle_syscall(thread, rax, rdi, rsi, rdx, r10, r8, r9);
 
 			rip = vm->exit_context.VpContext.Rip + 2;
 			vcpu_regs_t regs2[] = {
@@ -51,12 +52,12 @@ void handle_vmexit(process_t *process)
 			    VCPU_REGS_ENTRY_SET(RAX, rax),
 			};
 			vcpu_set_regs(vcpu, regs2, countof(regs2));
-			vm->in_operation = true;
+			vcpu->in_operation = true;
 			return;
 		}
 	}
 
-	vm->in_operation = false;
+	vcpu->in_operation = false;
 	printf("exit reason: %s (%x)\n", get_exit_reason_str(reason), reason);
 	printf("state: %x\n", vm->exit_context.VpContext.ExecutionState.AsUINT16);
 	printf("cs:rip : %x:%llx\n", vm->exit_context.VpContext.Cs.Selector, vm->exit_context.VpContext.Rip);

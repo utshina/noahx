@@ -5,7 +5,6 @@
 noreturn void
 _panic(char *msg)
 {
-	fprintf(stderr, "vmm: ");
 	fprintf(stderr, msg);
 	fprintf(stderr, "\n");
 	exit(EXIT_FAILURE);

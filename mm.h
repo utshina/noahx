@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <stdbool.h>
 #include "vm.h"
 #include "range.h"
 
@@ -88,6 +89,9 @@ mm_mmap(mm_t *mm, mm_gvirt_t gvirt, void *hvirt, size_t size, mm_mmap_prot_t pro
 
 void *
 mm_gvirt_to_hvirt(mm_t *mm, mm_gvirt_t gvirt);
+
+bool
+mm_copy_from_user(mm_t *mm, void *ptr, mm_gvirt_t gvirt, size_t size);
 
 void
 mm_dump_range_tree(mm_t *mm);

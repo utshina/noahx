@@ -5,7 +5,8 @@
 	SYSCALL(getuid, 102), \
 	SYSCALL(getgid, 104), \
 	SYSCALL(geteuid, 107), \
-	SYSCALL(getegid, 108),
+	SYSCALL(getegid, 108), \
+	SYSCALL(arch_prctl, 158),
 
 #define SYSCALL(name, number) LINUX_SYS_##name = number
 enum {
