@@ -90,10 +90,27 @@ mm_get_stack_top(mm_t *mm)
 }
 
 void
+mm_expand_heap(mm_t *mm, mm_gvirt_t new_heap_end)
+{
+	new_heap_end = roundup(new_heap_end, PAGE_SIZE_4K);
+	assert(new_heap_end > mm->heap_end);
+	size_t size_diff = new_heap_end - mm->heap_end;
+	void *heap = mmap(NULL, size_diff, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
+	if (!heap)
+		panic("out of memory");
+	mm_mmap(mm, mm->heap_end, heap, size_diff,
+		MM_MMAP_PROT_READ | MM_MMAP_PROT_WRITE,
+		MM_MMAP_TYPE_ALLOC);
+	mm->heap_size += size_diff;
+	mm->heap_end = new_heap_end;
+}
+
+void
 mm_setup_heap(mm_t *mm, mm_gvirt_t heap_start)
 {
 	mm->heap_size = PAGE_SIZE_4K;
 	mm->heap_start = heap_start;
+	mm->heap_end = heap_start + mm->heap_size;
 	mm->heap = mmap(NULL, mm->heap_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
 	if (!mm->heap)
 		panic("out of memory");

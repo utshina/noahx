@@ -75,6 +75,9 @@ void
 mm_setup_heap(mm_t *mm, mm_gvirt_t heap_start);
 
 void
+mm_expand_heap(mm_t *mm, mm_gvirt_t new_heap_end);
+
+void
 mm_get_sysregs(mm_t *mm, vcpu_sysregs_t *sysregs);
 
 void
