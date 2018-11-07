@@ -137,6 +137,10 @@ map_elf_file(elf_t *elf, mm_t *mm, char *filename, load_info_t *info)
 			mm_mmap_prot_t prot = conv_prot(phdr[i].p_flags);
 			mm_mmap(mm, gvirt, hvirt, size, prot, MM_MMAP_TYPE_MMAP);
 
+			void *file_end = data + phdr[i].p_offset + phdr[i].p_filesz;
+			size_t remainder = hvirt + size - file_end;
+			memset(file_end, 0, remainder);
+
 			if (load_base == 0)
 				load_base = phdr[i].p_vaddr - phdr[i].p_offset;
 			heap = roundup(max(heap, gvirt + size), PAGE_SIZE_4K);
