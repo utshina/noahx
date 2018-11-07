@@ -164,12 +164,14 @@ vcpu_init_sysregs(vcpu_t *vcpu, vcpu_sysregs_t *sysregs)
 	static const uint64_t CR4_PSE = 1ULL << 4;
 	static const uint64_t CR4_PAE = 1ULL << 5;
 	static const uint64_t CR4_PGE = 1ULL << 7;
+	static const uint64_t CR4_OSFXSR = 1ULL << 9;
+	static const uint64_t CR4_OSXMMEXCPT = 1ULL << 10;
 	static const uint64_t EFER_LME = 1ULL << 8;
 	static const uint64_t EFER_LMA = 1ULL << 10;
 
 	regvalue[Cr0].Reg64 |= (CR0_PE | CR0_PG);
 	regvalue[Cr3].Reg64 = sysregs->cr3;
-	regvalue[Cr4].Reg64 |= (CR4_PSE | CR4_PAE | CR4_PGE);
+	regvalue[Cr4].Reg64 |= (CR4_PSE | CR4_PAE | CR4_PGE | CR4_OSFXSR | CR4_OSXMMEXCPT);
 	regvalue[Efer].Reg64 |= (EFER_LME | EFER_LMA);
 	regvalue[Gdtr].Table.Base = sysregs->gdt_base;
 	regvalue[Gdtr].Table.Limit = sysregs->gdt_limit;
@@ -209,8 +211,6 @@ vcpu_get_regs(vcpu_t *vcpu, vcpu_regs_t *regs, int count)
 	WHvGetVirtualProcessorRegisters(
 		vcpu->vm->handle, vcpu->id, regname, count, regvalue)
 		OR panic("get virtual processor registers error");
-	for (int i = 0; i < count; i++)
-		printf("%d: %llx\n", i, regvalue[i].Reg64);
 	for (int i = 0; i < count; i++)
 		*regs[i].ptr = regvalue[i].Reg64;
 }
