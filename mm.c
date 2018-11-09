@@ -72,15 +72,28 @@ mm_gvirt_to_hvirt(mm_t *mm, mm_gvirt_t gvirt)
 }
 
 bool
-mm_copy_from_user(mm_t *mm, void *ptr, mm_gvirt_t gvirt, size_t size)
+mm_copy_from_user(mm_t *mm, void *dst, mm_gvirt_t src, size_t size)
 {
-	range_t *r = range_search_one(get_mmap_range_root(mm), gvirt);
+	range_t *r = range_search_one(get_mmap_range_root(mm), src);
 	if (r == NULL)
 		return false;
-	if (r->end < gvirt + size)
+	if (r->end < src + size)
 		panic("cross the page boundary");
-	void *src = range_to_hvirt(r, gvirt);
-	memcpy(src, ptr, size);
+	void *src_hvirt = range_to_hvirt(r, src);
+	memcpy(dst, src_hvirt, size);
+	return true;
+}
+
+bool
+mm_copy_to_user(mm_t *mm, mm_gvirt_t dst, void *src, size_t size)
+{
+	range_t *r = range_search_one(get_mmap_range_root(mm), dst);
+	if (r == NULL)
+		return false;
+	if (r->end < dst + size)
+		panic("cross the page boundary");
+	void *dst_hvirt = range_to_hvirt(r, dst);
+	memcpy(dst_hvirt, src, size);
 	return true;
 }
 

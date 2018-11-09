@@ -91,7 +91,10 @@ void *
 mm_gvirt_to_hvirt(mm_t *mm, mm_gvirt_t gvirt);
 
 bool
-mm_copy_from_user(mm_t *mm, void *ptr, mm_gvirt_t gvirt, size_t size);
+mm_copy_from_user(mm_t *mm, void *dst, mm_gvirt_t src, size_t size);
+
+bool
+mm_copy_to_user(mm_t *mm, mm_gvirt_t dst, void *src, size_t size);
 
 void
 mm_dump_range_tree(mm_t *mm);
