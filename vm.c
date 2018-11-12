@@ -3,8 +3,9 @@
 #include <stdio.h>
 #include <stdnoreturn.h>
 #include <alloca.h>
-#include "panic.h"
+#include "winsdk.h"
 #include "vm.h"
+#include "panic.h"
 
 #define SUCCESS 0x80000000
 #undef OR

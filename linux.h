@@ -17,3 +17,7 @@ enum {
 	SYSCALLS
 };
 #undef SYSCALL
+
+enum {
+	LINUX_EACCES = 13,
+};

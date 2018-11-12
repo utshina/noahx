@@ -1,32 +1,26 @@
 TARGET = noahx.exe
 CC = gcc
-CFLAGS = -std=c11 -I. -Wall -Werror -Wno-parentheses -Wno-unknown-pragmas -D_POSIX_C_SOURCE=200809L
+CFLAGS = -std=c11 -I. -idirafter$(WINSDKINC) -Wall -Werror -Wno-parentheses -Wno-unknown-pragmas -D_POSIX_C_SOURCE=200809L -MMD -MP
 LDFLAGS = -L/cygdrive/c/Windows/System32 -lWinHvPlatform
 WINSDKDIR = /cygdrive/c/Program Files (x86)/Windows Kits/10/Include
-HEADERS = WinHvPlatform.h WinHvPlatformDefs.h
+WINSDKINC = "$(shell find "$(WINSDKDIR)" -name WinHvPlatform.h -printf "%h\n" | tail -n 1)"
 SRCS = $(shell ls *.c)
 OBJS = $(patsubst %.c,%.o,$(SRCS))
 INCS = $(shell ls *.h)
 
 .c.o:
-	gcc $(CFLAGS) -c $<
+	$(CC) $(CFLAGS) -c $<
 
-
-.PHONY: all init clean
+.PHONY: all clean
 
 all: $(TARGET)
 
-$(TARGET): utsversion $(OBJS)
-	gcc $(OBJS) -o $@ $(LDFLAGS)
-
-utsversion:
+$(TARGET): $(OBJS)
 	echo "const char utsversion[] = \"#1 SMP `env LANG=en date`\";" > utsversion.c
-	gcc -c utsversion.c -o utsversion.o
+	$(CC) -c utsversion.c -o utsversion.o
+	$(CC) $(OBJS) -o $@ $(LDFLAGS)
 
-$(foreach SRC,$(SRCS),$(eval $(subst \,,$(shell $(CC) -MM $(SRC)))))
-
-init:
-	find "$(WINSDKDIR)" -name "WinHvPlatform*" -exec cp {} . \;
+-include *.d
 
 clean:
-	rm -f $(TARGET) *.o
+	rm -f $(TARGET) *.o *.d

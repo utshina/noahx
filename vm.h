@@ -1,7 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
-#include "WinHvPlatform.h"
+#include <WinHvPlatform.h>
 #include "range.h"
 #include "util.h"
 
