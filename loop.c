@@ -84,7 +84,7 @@ void handle_vmexit(thread_t *thread)
 		break;
 
 	case WHvRunVpExitReasonUnrecoverableException:
-		printf("info: %x\n", vm->exit_context.VpException.ExceptionInfo.AsUNIT32);
+		printf("info: %x\n", vm->exit_context.VpException.ExceptionInfo.AsUINT32);
 		printf("type: %d\n", vm->exit_context.VpException.ExceptionType);
 		printf("error code: %d\n", vm->exit_context.VpException.ErrorCode);
 		printf("inst count: %d\n", vm->exit_context.VpException.InstructionByteCount);
