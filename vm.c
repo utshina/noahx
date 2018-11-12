@@ -3,7 +3,6 @@
 #include <stdio.h>
 #include <stdnoreturn.h>
 #include <alloca.h>
-#include "winsdk.h"
 #include "vm.h"
 #include "panic.h"
 
