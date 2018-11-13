@@ -15,6 +15,7 @@
 #define SYSCALL(name, number) LINUX_SYS_##name = number,
 enum {
 	SYSCALLS
+	SYSCALL_MAX
 };
 #undef SYSCALL
 
