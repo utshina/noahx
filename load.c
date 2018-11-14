@@ -71,7 +71,7 @@ setup_stack(elf_t *elf, mm_t *mm, load_info_t *info)
 	push_strings(mm, rsp, argc, argv, guest_argv);
 
 	Elf64_auxv_t auxv[] = {
-		{ AT_BASE,  {0} },
+//		{ AT_BASE,  {0} },
 		{ AT_ENTRY, { elf->entry } },
 		{ AT_PHDR, { elf->phdr } },
 		{ AT_PHENT, { elf->phent } },

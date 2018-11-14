@@ -75,7 +75,7 @@ mm_get_stack_top(mm_t *mm);
 void
 mm_setup_heap(mm_t *mm, mm_gvirt_t heap_start);
 
-void
+int
 mm_expand_heap(mm_t *mm, mm_gvirt_t new_heap_end);
 
 void

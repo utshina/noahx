@@ -121,7 +121,7 @@ mm_get_stack_top(mm_t *mm)
 	return mm->stack_top;
 }
 
-void
+int
 mm_expand_heap(mm_t *mm, mm_gvirt_t new_heap_end)
 {
 	new_heap_end = roundup(new_heap_end, PAGE_SIZE_4K);
@@ -135,6 +135,7 @@ mm_expand_heap(mm_t *mm, mm_gvirt_t new_heap_end)
 		MM_MMAP_TYPE_ALLOC);
 	mm->heap_size += size_diff;
 	mm->heap_end = new_heap_end;
+	return new_heap_end;
 }
 
 void

@@ -122,6 +122,19 @@ void handle_vmexit(thread_t *thread)
 	fprintf(stderr, "rsi=%016lx, rdi=%016lx, rbp=%016lx, rsp=%016lx\n", rsi, rdi, rbp, rsp);
 	fprintf(stderr, " r8=%016lx,  r9=%016lx, r10=%016lx, r11=%016lx\n", r8, r9, r10, r11);
 	fprintf(stderr, "r12=%016lx, r13=%016lx, r14=%016lx, r15=%016lx\n", r12, r13, r14, r15);
+	dump_guest_stack(mm, rsp);	
+
+	WHV_REGISTER_NAME regname[1];
+	WHV_REGISTER_VALUE regvalue[1];
+
+	regname[0] = VCPU_SEG_FS;
+	WHvGetVirtualProcessorRegisters(
+		vcpu->vm->handle, vcpu->id, regname, 1, regvalue);
+	mm_gvirt_t fsbase = regvalue[0].Segment.Base;
+	fprintf(stderr, "fs base: %lx\n", fsbase);
+	uint64_t *p = mm_gvirt_to_hvirt(mm, fsbase);
+	for (int i = 0; i < 0x30; i++)
+		fprintf(stderr, "%lx\n", *(p+i));
 
 	return;
 }
