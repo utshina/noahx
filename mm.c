@@ -27,7 +27,7 @@ kernel_hvirt_to_gphys(mm_t *mm, void *hvirt)
 static mm_mmap_range_t *
 alloc_mmap_range(mm_gvirt_t start, void *hvirt, size_t size, mm_mmap_type_t type)
 {
-	mm_mmap_range_t *mmap_range = malloc(sizeof(mm_mmap_range_t));
+	mm_mmap_range_t *mmap_range = (mm_mmap_range_t *)malloc(sizeof(mm_mmap_range_t));
 	if (mmap_range == NULL)
 		panic("out of memory");
 	range_init(&mmap_range->range,  start, start + size);
@@ -47,8 +47,9 @@ void
 mm_mmap(mm_t *mm, mm_gvirt_t gvirt, void *hvirt, size_t size, mm_mmap_prot_t prot, mm_mmap_type_t type)
 {
 	assert(gvirt < mm->kernel_start);
+	printf("prot: %x\n", prot);
 
-	vm_mmap(mm->vm, gvirt_to_gphys(gvirt), hvirt, size, prot);
+	vm_mmap(mm->vm, gvirt_to_gphys(gvirt), hvirt, size, (vm_mmap_prot_t)prot);
 
 	mm_mmap_range_t *mmap_range = alloc_mmap_range(gvirt, hvirt, size, type);
 	range_insert(get_mmap_range_root(mm), &mmap_range->range);
@@ -58,8 +59,8 @@ mm_mmap(mm_t *mm, mm_gvirt_t gvirt, void *hvirt, size_t size, mm_mmap_prot_t pro
 static void *
 range_to_hvirt(range_t *r, mm_gvirt_t gvirt)
 {
-	mm_mmap_range_t *mmap_range = (void *)r;
-	return mmap_range->hvirt + (gvirt - mmap_range->range.start);
+	mm_mmap_range_t *mmap_range = (mm_mmap_range_t *)r;
+	return (char *)mmap_range->hvirt + (gvirt - mmap_range->range.start);
 }
 
 void *
@@ -171,7 +172,7 @@ mm_setup_kernel(mm_t *mm)
 {
 	mm->kernel_start = 255 GiB;
 	mm->kernel_size = roundup(sizeof(*mm->kernel), PAGE_SIZE_4K);
-	mm->kernel = aligned_alloc(PAGE_SIZE_4K, mm->kernel_size);
+	mm->kernel = (__typeof(mm->kernel))aligned_alloc(PAGE_SIZE_4K, mm->kernel_size);
 	if (!mm->kernel)
 		panic("out of memory");
 	memset(mm->kernel, 0, mm->kernel_size);
@@ -187,7 +188,7 @@ mm_setup_kernel(mm_t *mm)
 	const uint64_t PDPTE_FLAG = PTE_P | PTE_RW | PTE_US | PTE_PS;
 	mm->kernel->pml4[0] = kernel_hvirt_to_gphys(mm, mm->kernel->pdpt) | PML4E_FLAG;
 	const uint64_t pdpte_count = mm->kernel_start / (1 GiB);
-	for (int i = 0; i < pdpte_count; i++)
+	for (uint64_t i = 0; i < pdpte_count; i++)
 		mm->kernel->pdpt[i] = i GiB | PDPTE_FLAG;
 
 	mm->kernel->gdt[0] = 0;

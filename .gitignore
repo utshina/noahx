@@ -4,3 +4,4 @@
 *.stackdump
 *.out
 utsversion.c
+.vscode/

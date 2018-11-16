@@ -2,9 +2,9 @@
 
 #include <stdnoreturn.h>
 
-#define OR ?true:
+#define OR ?(void)0:
 
-noreturn void
-_panic(char *msg);
+_Noreturn void
+_panic(const char *msg);
 
 #define panic(msg) _panic(__FILE__ ": " msg)

@@ -8,16 +8,14 @@
 
 #define SUCCESS 0x80000000
 #undef OR
-#define OR & SUCCESS ^ SUCCESS ?:
+#define OR & SUCCESS ^ SUCCESS ?(void)0:
 
 static bool initialized = false;
 
-noreturn void
-panicw(HRESULT result, char *msg)
+_Noreturn void
+panicw(HRESULT result, const char *msg)
 {
-	fprintf(stderr, "vm: ");
-	fprintf(stderr, msg);
-	fprintf(stderr, "\n");
+	fprintf(stderr, "vm: %s\n", msg);
 	LPVOID lpMsgBuf;
 	FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER |
 		      FORMAT_MESSAGE_FROM_SYSTEM |
@@ -25,7 +23,7 @@ panicw(HRESULT result, char *msg)
 		      NULL, result,
 		      MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US),
 		      (LPTSTR) &lpMsgBuf, 0, NULL);
-	fprintf(stderr, (const char *)lpMsgBuf);
+	fputs((const char *)lpMsgBuf, stderr);
 	exit(EXIT_FAILURE);
 }
 
@@ -73,7 +71,8 @@ vm_mmap(vm_t *vm, vm_gphys_t gphys, void *hvirt, size_t size, vm_mmap_prot_t pro
 	assert(vm != NULL);
 	printf("mmap: hvirt=%p, gphys=%lx, size=%lx, prot=%x\n",
 		hvirt, gphys, size, prot);
-	hr = WHvMapGpaRange(vm->handle, hvirt, gphys, size, prot);
+	WHV_MAP_GPA_RANGE_FLAGS wprot = (WHV_MAP_GPA_RANGE_FLAGS)prot;
+	hr = WHvMapGpaRange(vm->handle, hvirt, gphys, size, wprot);
 	if (FAILED(hr))
 		panicw(hr, "user mmap error");
 }
@@ -139,7 +138,7 @@ vcpu_init_sysregs(vcpu_t *vcpu, vcpu_sysregs_t *sysregs)
 		Cs, Ss, Ds, Es, Fs, Gs,
 	};
 	WHV_REGISTER_NAME regname[] = {
-#define REGNAME_ENTRY(reg) [reg] = WHvX64Register##reg
+#define REGNAME_ENTRY(reg) WHvX64Register##reg
 		REGNAME_ENTRY(Cr0),
 		REGNAME_ENTRY(Cr3),
 		REGNAME_ENTRY(Cr4),
@@ -181,20 +180,22 @@ vcpu_init_sysregs(vcpu_t *vcpu, vcpu_sysregs_t *sysregs)
 	regvalue[Tr].Segment.Limit = sysregs->tss_limit;
 	regvalue[Tr].Segment.Selector = 0x10;
 	regvalue[Tr].Segment.Attributes = 0x808b;
-	WHV_X64_SEGMENT_REGISTER CodeSegment = {
-		.Base = 0, .Limit = 0xffff,
-		.Selector = 0x08, .Attributes = 0xa0fb,
-	};
+	WHV_X64_SEGMENT_REGISTER CodeSegment;
+	CodeSegment.Base = 0;
+	CodeSegment.Limit = 0xffff;
+	CodeSegment.Selector = 0x08;
+	CodeSegment.Attributes = 0xa0fb;
 	regvalue[Cs].Segment = CodeSegment;
-	WHV_X64_SEGMENT_REGISTER DataSegment = {
-		.Base = 0, .Limit = 0xffff,
-		.Selector = 0x10, .Attributes = 0xc0f3,
-	};
+	WHV_X64_SEGMENT_REGISTER DataSegment;
+	DataSegment.Base = 0;
+	DataSegment.Limit = 0xffff;
+	DataSegment.Selector = 0x10;
+	DataSegment.Attributes = 0xc0f3;
 	regvalue[Ss].Segment = DataSegment;
-	regvalue[Ds].Segment = DataSegment;
-	regvalue[Es].Segment = DataSegment;
-	regvalue[Fs].Segment = DataSegment;
-	regvalue[Gs].Segment = DataSegment;
+	regvalue[Ds].Segment = {};
+	regvalue[Es].Segment = {};
+	regvalue[Fs].Segment = {};
+	regvalue[Gs].Segment = {};
 	WHvSetVirtualProcessorRegisters(
 		vm->handle, vcpu->id, regname, countof(regname), regvalue)
 		OR panic("set virtual processor registers error");
@@ -207,7 +208,7 @@ vcpu_get_regs(vcpu_t *vcpu, vcpu_regs_t *regs, int count)
 	WHV_REGISTER_VALUE regvalue[sizeof(WHV_REGISTER_VALUE) * count];
 
 	for (int i = 0; i < count; i++)
-		regname[i] = regs[i].name;
+		regname[i] = (WHV_REGISTER_NAME)regs[i].name;
 	WHvGetVirtualProcessorRegisters(
 		vcpu->vm->handle, vcpu->id, regname, count, regvalue)
 		OR panic("get virtual processor registers error");
@@ -222,7 +223,7 @@ vcpu_set_regs(vcpu_t *vcpu, vcpu_regs_t *regs, int count)
 	WHV_REGISTER_VALUE regvalue[sizeof(WHV_REGISTER_VALUE) * count];
 
 	for (int i = 0; i < count; i++)
-		regname[i] = regs[i].name;
+		regname[i] = (WHV_REGISTER_NAME)regs[i].name;
 	for (int i = 0; i < count; i++)
 		regvalue[i].Reg64 = regs[i].value;
 	WHvSetVirtualProcessorRegisters(
@@ -231,12 +232,13 @@ vcpu_set_regs(vcpu_t *vcpu, vcpu_regs_t *regs, int count)
 }
 
 void
-vcpu_set_segbase(vcpu_t *vcpu, int seg, uint64_t base)
+vcpu_set_segbase(vcpu_t *vcpu, vcpu_regname_t seg, uint64_t base)
 {
 	WHV_REGISTER_NAME regname[1];
-	WHV_REGISTER_VALUE regvalue[1] = {0};
+	WHV_REGISTER_VALUE regvalue[1];
 
-	regname[0] = seg;
+	memset(regvalue, 0, sizeof(regvalue));
+	regname[0] = (WHV_REGISTER_NAME)seg;
 	regvalue[0].Segment.Base = base;
 	WHvSetVirtualProcessorRegisters(
 		vcpu->vm->handle, vcpu->id, regname, 1, regvalue)

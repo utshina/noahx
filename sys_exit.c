@@ -1,8 +1,8 @@
 #include <unistd.h>
-#include "linux.h"
+#include "process.h"
 
-void
-sys_exit_group(int status)
+long
+sys_exit_group(thread_t *thread, uint64_t *args)
 {
-	_exit(status);
+	_exit(args[0]);
 }

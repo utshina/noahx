@@ -12,15 +12,18 @@ static struct {
 	char machine[LEN];
 	char domainname[LEN];
 } utsname = {
-	.sysname = "Linux",
-	.release = "4.19.noahx.x86_64",
-	.machine = "x86_64",
-	.domainname = "",
+	"Linux",
+	"",
+	"4.19.noahx.x86_64",
+	"",
+	"x86_64",
+	"",
 };
 
 int
-sys_uname(thread_t *thread, mm_gvirt_t buf)
+sys_uname(thread_t *thread, uint64_t *args)
 {
+	mm_gvirt_t buf = args[0];
 	mm_t *mm = &thread->process->mm;
 	gethostname(utsname.nodename, sizeof(utsname.nodename));
 	strcpy(utsname.version, utsversion);

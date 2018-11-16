@@ -15,7 +15,7 @@ process_create(process_t *process)
 
 	process->thread_count = 1;
 	process->thread_count_max = 2;
-	process->thread = calloc(process->thread_count_max, sizeof(thread_t));
+	process->thread = (thread_t *)calloc(process->thread_count_max, sizeof(thread_t));
 	if (process->thread == NULL)
 		panic("out of memory");
 	thread_create(&process->thread[0], process);

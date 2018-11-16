@@ -15,12 +15,18 @@ typedef struct {
 	uint64_t phnum;
 } elf_t;
 
+static uint64_t
+max(uint64_t a, uint64_t b)
+{
+	return a > b ? a : b;
+}
+
 static void
 push(mm_t *mm, uint64_t *rsp, const void *data, size_t n)
 {
 	uint64_t remainder = roundup(n, 8) - n;
 	*rsp -= (n + remainder);
-	void *sp = mm_stack_gvirt_to_hvirt(mm, *rsp);
+	char *sp = (char *)mm_stack_gvirt_to_hvirt(mm, *rsp);
 	memcpy(sp, data, n);
 	memset(sp + n, 0, remainder);
 }
@@ -89,7 +95,7 @@ setup_stack(elf_t *elf, mm_t *mm, load_info_t *info)
 static mm_mmap_prot_t
 conv_prot(Elf64_Word flags)
 {
-	mm_mmap_prot_t prot = 0;
+	mm_mmap_prot_t prot = MM_MMAP_PROT_NONE;
 	if (flags & PF_X) prot |= MM_MMAP_PROT_EXEC;
 	if (flags & PF_W) prot |= MM_MMAP_PROT_WRITE;
 	if (flags & PF_R) prot |= MM_MMAP_PROT_READ;
@@ -107,11 +113,11 @@ map_elf_file(elf_t *elf, mm_t *mm, char *filename, load_info_t *info)
 	fstat(fd, &statbuf) == 0
 		OR panic("can't stat");
 
-	void *data = mmap(NULL, statbuf.st_size, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_PRIVATE, fd, 0);
+	uint8_t *data = (uint8_t *)mmap(NULL, statbuf.st_size, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_PRIVATE, fd, 0);
 	if (data == MAP_FAILED)
 		perror("mmap"), panic("mmap failed");
 
-	Elf64_Ehdr *ehdr = data;
+	Elf64_Ehdr *ehdr = (Elf64_Ehdr *)data;
 	uint8_t valid_ident[] = {0x7f, 'E', 'L', 'F', 0x02, 0x01, 0x01};
 	memcmp(ehdr->e_ident, valid_ident, sizeof(valid_ident)) == 0
 		OR panic("ELF header is invalid");
@@ -123,7 +129,7 @@ map_elf_file(elf_t *elf, mm_t *mm, char *filename, load_info_t *info)
 	info->entry = elf->entry = ehdr->e_entry;
 
 	int n = ehdr->e_phnum;
-	Elf64_Phdr *phdr = data + ehdr->e_phoff;
+	Elf64_Phdr *phdr = (Elf64_Phdr *)(data + ehdr->e_phoff);
 
 	mm_gvirt_t heap = 0;
 	uint64_t load_base = 0;
@@ -132,12 +138,12 @@ map_elf_file(elf_t *elf, mm_t *mm, char *filename, load_info_t *info)
 		case PT_LOAD: {
 			off_t offset = rounddown(phdr[i].p_offset, PAGE_SIZE_4K);
 			mm_gvirt_t gvirt = rounddown(phdr[i].p_vaddr, PAGE_SIZE_4K);
-			void *hvirt = data + offset;
+			uint8_t *hvirt = data + offset;
 			uint64_t size = roundup(gvirt + phdr[i].p_memsz, PAGE_SIZE_4K) - gvirt;
 			mm_mmap_prot_t prot = conv_prot(phdr[i].p_flags);
 			mm_mmap(mm, gvirt, hvirt, size, prot, MM_MMAP_TYPE_MMAP);
 
-			void *file_end = data + phdr[i].p_offset + phdr[i].p_filesz;
+			uint8_t *file_end = data + phdr[i].p_offset + phdr[i].p_filesz;
 			size_t remainder = hvirt + size - file_end;
 			memset(file_end, 0, remainder);
 

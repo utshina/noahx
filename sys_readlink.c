@@ -1,9 +1,9 @@
 #include <unistd.h>
-#include "mm.h"
+#include "process.h"
 #include "linux.h"
 
-ssize_t
-sys_readlink(mm_gvirt_t pathname, mm_gvirt_t buf, size_t size)
+long
+sys_readlink(thread_t *thread, uint64_t *args)
 {
-    return -LINUX_EACCES;
+	return -LINUX_EACCES;
 }

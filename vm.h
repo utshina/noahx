@@ -14,11 +14,11 @@ typedef struct {
 void
 vm_create(vm_t *vm);
 
-typedef enum {
-	VM_MMAP_PROT_READ = WHvMapGpaRangeFlagRead,
-	VM_MMAP_PROT_WRITE = WHvMapGpaRangeFlagWrite,
-	VM_MMAP_PROT_EXEC = WHvMapGpaRangeFlagExecute,
-} vm_mmap_prot_t;
+typedef int vm_mmap_prot_t;
+static const vm_mmap_prot_t VM_MMAP_PROT_READ = WHvMapGpaRangeFlagRead;
+static const vm_mmap_prot_t VM_MMAP_PROT_WRITE = WHvMapGpaRangeFlagWrite;
+static const vm_mmap_prot_t VM_MMAP_PROT_EXEC = WHvMapGpaRangeFlagExecute;
+
 void
 vm_mmap(vm_t *vm, vm_gphys_t gphys, void *hvirt, size_t size, vm_mmap_prot_t prot);
 
@@ -73,19 +73,19 @@ typedef uint64_t vcpu_regvalue_t;
 typedef struct {
 	vcpu_regname_t name;
 	union {
-		vcpu_regvalue_t *ptr;
 		vcpu_regvalue_t value;
+		vcpu_regvalue_t *ptr;
 	};
 } vcpu_regs_t;
-#define VCPU_REGS_ENTRY_GET(reg, val) { .name = VCPU_REG_##reg, .ptr = val }
-#define VCPU_REGS_ENTRY_SET(reg, val) { .name = VCPU_REG_##reg, .value = val }
+#define VCPU_REGS_ENTRY_GET(reg, val) { VCPU_REG_##reg, { (vcpu_regvalue_t)val } }
+#define VCPU_REGS_ENTRY_SET(reg, val) { VCPU_REG_##reg, { val } }
 
 void
 vcpu_get_regs(vcpu_t *vcpu, vcpu_regs_t *regs, int count);
 void
 vcpu_set_regs(vcpu_t *vcpu, vcpu_regs_t *regs, int count);
 void
-vcpu_set_segbase(vcpu_t *vcpu, int seg, uint64_t base);
+vcpu_set_segbase(vcpu_t *vcpu, vcpu_regname_t seg, uint64_t base);
 
 #if 0
 static inline void *

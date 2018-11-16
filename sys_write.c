@@ -2,9 +2,13 @@
 #include "process.h"
 #include "panic.h"
 
-ssize_t
-sys_write(thread_t *thread, int fd, mm_gvirt_t gbuf, size_t count)
+long
+sys_write(thread_t *thread, uint64_t *args)
 {
+	int fd = args[0];
+	mm_gvirt_t gbuf = args[1];
+	size_t count = args[2];
+
 	void *buf = malloc(count);
 	if (buf == NULL)
 		panic("out of memory");

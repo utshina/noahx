@@ -2,8 +2,11 @@
 #include "panic.h"
 
 int
-sys_arch_prctl(thread_t *thread, int code, uint64_t arg2)
+sys_arch_prctl(thread_t *thread, uint64_t *args)
 {
+	int code = args[0];
+	uint64_t arg2 = args[1];
+
 	enum
 	{
 		ARCH_SET_GS = 0x1001,

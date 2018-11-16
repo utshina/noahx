@@ -2,11 +2,10 @@
 #include <stdlib.h>
 #include "panic.h"
 
-noreturn void
-_panic(char *msg)
+_Noreturn void
+_panic(const char *msg)
 {
-	fprintf(stderr, msg);
-	fprintf(stderr, "\n");
+	fprintf(stderr, "%s\n", msg);
 	exit(EXIT_FAILURE);
 }
 

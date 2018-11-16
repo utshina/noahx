@@ -17,19 +17,20 @@ typedef enum {
 	MM_MMAP_TYPE_MMAP,
 } mm_mmap_type_t;
 
-typedef enum {
-	MM_MMAP_PROT_READ = VM_MMAP_PROT_READ,
-	MM_MMAP_PROT_WRITE = VM_MMAP_PROT_WRITE,
-	MM_MMAP_PROT_EXEC = VM_MMAP_PROT_EXEC,
+typedef int mm_mmap_prot_t;
+static const mm_mmap_prot_t MM_MMAP_PROT_NONE = 0;
+static const mm_mmap_prot_t MM_MMAP_PROT_READ = VM_MMAP_PROT_READ;
+static const mm_mmap_prot_t MM_MMAP_PROT_WRITE = VM_MMAP_PROT_WRITE;
+static const mm_mmap_prot_t MM_MMAP_PROT_EXEC = VM_MMAP_PROT_EXEC;
 
-	MM_MMAP_PROT_RE = MM_MMAP_PROT_READ | MM_MMAP_PROT_EXEC,
-	MM_MMAP_PROT_RW = MM_MMAP_PROT_READ | MM_MMAP_PROT_WRITE,
-	MM_MMAP_PROT_RWE = MM_MMAP_PROT_READ | MM_MMAP_PROT_WRITE | MM_MMAP_PROT_EXEC,
-} mm_mmap_prot_t;
+static const mm_mmap_prot_t MM_MMAP_PROT_RE = MM_MMAP_PROT_READ | MM_MMAP_PROT_EXEC;
+static const mm_mmap_prot_t MM_MMAP_PROT_RW = MM_MMAP_PROT_READ | MM_MMAP_PROT_WRITE;
+static const mm_mmap_prot_t MM_MMAP_PROT_RWE = MM_MMAP_PROT_READ | MM_MMAP_PROT_WRITE | MM_MMAP_PROT_EXEC;
+
 
 typedef struct {
 	range_t range;
-	char *hvirt;
+	void *hvirt;
 	uint64_t size;
 	mm_mmap_type_t type;
 } mm_mmap_range_t;
@@ -102,7 +103,7 @@ mm_dump_range_tree(mm_t *mm);
 static inline void *
 mm_stack_gvirt_to_hvirt(mm_t *mm, mm_gvirt_t gvirt)
 {
-	return mm->stack + (gvirt - mm->stack_bottom);
+	return (char *)mm->stack + (gvirt - mm->stack_bottom);
 }
 
 #if 0
