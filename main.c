@@ -1,3 +1,6 @@
+#include "Vm.hpp"
+#include "Vcpu.hpp"
+#include "Process.hpp"
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -9,6 +12,10 @@ int
 main(int argc, char *argv[])
 {
 	process_t process;
+
+	{
+		Process process;
+	}
 
 	if (argc < 2) {
 		printf("Usage: %s [ELF file]\n", argv[0]);

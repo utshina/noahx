@@ -47,7 +47,6 @@ void
 mm_mmap(mm_t *mm, mm_gvirt_t gvirt, void *hvirt, size_t size, mm_mmap_prot_t prot, mm_mmap_type_t type)
 {
 	assert(gvirt < mm->kernel_start);
-	printf("prot: %x\n", prot);
 
 	vm_mmap(mm->vm, gvirt_to_gphys(gvirt), hvirt, size, (vm_mmap_prot_t)prot);
 

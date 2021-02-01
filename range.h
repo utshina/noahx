@@ -9,6 +9,7 @@ typedef struct range {
 
 typedef range_t **range_root_t;
 
+#if 0
 static inline void
 range_init(range_t *range, uint64_t start, uint64_t end)
 {
@@ -17,6 +18,7 @@ range_init(range_t *range, uint64_t start, uint64_t end)
 	range->start = start;
 	range->end = end;
 }
+#endif
 
 range_t *
 range_search(range_root_t root, uint64_t start, uint64_t end);

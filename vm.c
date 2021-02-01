@@ -4,7 +4,7 @@
 #include <stdnoreturn.h>
 #include <alloca.h>
 #include "vm.h"
-#include "panic.h"
+#include "panicw.hpp"
 
 #define SUCCESS 0x80000000
 #undef OR
@@ -12,6 +12,7 @@
 
 static bool initialized = false;
 
+#if 0
 _Noreturn void
 panicw(HRESULT result, const char *msg)
 {
@@ -26,6 +27,7 @@ panicw(HRESULT result, const char *msg)
 	fputs((const char *)lpMsgBuf, stderr);
 	exit(EXIT_FAILURE);
 }
+#endif
 
 static void
 vmm_init(void)
@@ -76,46 +78,6 @@ vm_mmap(vm_t *vm, vm_gphys_t gphys, void *hvirt, size_t size, vm_mmap_prot_t pro
 	if (FAILED(hr))
 		panicw(hr, "user mmap error");
 }
-
-#if 0
-void
-vmm_setup_vm(vm_t *vm)
-{
-	static const uint64_t KERNEL_OFFSET = 255 GiB;
-	vm->stack_top_gphys = KERNEL_OFFSET;
-	vm->stack_size = 1 MiB;
-	vm->kernel_gphys = KERNEL_OFFSET;
-	vm->kernel_size = 1 MiB;
-
-	vm->stack = aligned_alloc(PAGE_SIZE_4K, vm->stack_size);
-	if (!vm->stack)
-		panic("out of memory");
-	vmm_mmap(vm, vm->stack,
-		 vm->stack_top_gphys - vm->stack_size, vm->stack_size,
-		 VMM_MMAP_PROT_READ | VMM_MMAP_PROT_WRITE);
-	vm->regs.rsp = vm->stack_top_gphys;
-
-	vm->heap_gvirt = 0;
-
-	vm->kernel = aligned_alloc(PAGE_SIZE_4K, vm->kernel_size);
-	if (!vm->kernel)
-		panic("out of memory");
-	vmm_mmap(vm, vm->kernel, vm->kernel_gphys, vm->kernel_size,
-		 VMM_MMAP_PROT_READ | VMM_MMAP_PROT_WRITE);
-
-	memset(vm->kernel, 0, sizeof(*vm->kernel));
-	uint64_t *pml4_entry = (uint64_t *)vm->kernel->pml4;
-	uint64_t *pdpt_entry = (uint64_t *)vm->kernel->pdpt;
-	// PML4 entry = P & RW & US
-	pml4_entry[0] = kernel_hvirt_to_gphys(vm, pdpt_entry) | 0x07;
-	for (int i = 0; i < KERNEL_OFFSET / (1 GiB); i++)
-		pdpt_entry[i] = i GiB | 0x87; // P & RW & US & PS & PGE
-
-	vm->kernel->gdt[0] = 0;
-	vm->kernel->gdt[1] = 0x00a0fa000000ffff; // user code
-	vm->kernel->gdt[2] = 0x00c0f2000000ffff; // user data
-}
-#endif
 
 void
 vm_create_vcpu(vm_t *vm, vcpu_t *vcpu)
@@ -176,19 +138,21 @@ vcpu_init_sysregs(vcpu_t *vcpu, vcpu_sysregs_t *sysregs)
 	regvalue[Gdtr].Table.Limit = sysregs->gdt_limit;
 	regvalue[Idtr].Table.Base = sysregs->idt_base;
 	regvalue[Idtr].Table.Limit = sysregs->idt_limit;
+	regvalue[Idtr].Table.Base = 0;
+	regvalue[Idtr].Table.Limit = 0;
 	regvalue[Tr].Segment.Base = sysregs->tss_base;
 	regvalue[Tr].Segment.Limit = sysregs->tss_limit;
 	regvalue[Tr].Segment.Selector = 0x10;
 	regvalue[Tr].Segment.Attributes = 0x808b;
 	WHV_X64_SEGMENT_REGISTER CodeSegment;
 	CodeSegment.Base = 0;
-	CodeSegment.Limit = 0xffff;
+	CodeSegment.Limit = 0xfffff;
 	CodeSegment.Selector = 0x08;
 	CodeSegment.Attributes = 0xa0fb;
 	regvalue[Cs].Segment = CodeSegment;
 	WHV_X64_SEGMENT_REGISTER DataSegment;
 	DataSegment.Base = 0;
-	DataSegment.Limit = 0xffff;
+	DataSegment.Limit = 0xfffff;
 	DataSegment.Selector = 0x10;
 	DataSegment.Attributes = 0xc0f3;
 	regvalue[Ss].Segment = DataSegment;
@@ -253,4 +217,13 @@ vcpu_run(vcpu_t *vcpu)
 		vm->handle, vcpu->id,
 		&vm->exit_context, sizeof(vm->exit_context))
 		OR panic("run virtual processor error");
+}
+
+void
+vcpu_stop(vcpu_t *vcpu)
+{
+	vm_t *vm = vcpu->vm;
+	WHvCancelRunVirtualProcessor(
+		vm->handle, vcpu->id, 0)
+		OR panic("cannot stop virtual processor");
 }

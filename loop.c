@@ -15,9 +15,26 @@ get_exit_reason_str(int reason)
 		return "memory";
 	case WHvRunVpExitReasonUnrecoverableException:
 		return "exception";
+	case WHvRunVpExitReasonCanceled:
+		return "canceled";
 	default:
 		return "undefined";
 	}
+}
+
+static void
+print_instruction(mm_t *mm)
+{
+	WHV_VP_EXIT_CONTEXT *context = &mm->vm->exit_context.VpContext;
+	uint8_t len = context->InstructionLength;
+	fprintf(stderr, "inst(%d): ", len);
+	if (len == 0)
+		len = 8;
+	uint64_t rip = context->Rip;
+	uint8_t *p = (uint8_t *)mm_gvirt_to_hvirt(mm, rip);
+	for (int i = 0; i < len; i++)
+		fprintf(stderr, "%02x ", p[i]);
+	fprintf(stderr, "\n");
 }
 
 void handle_vmexit(thread_t *thread)
@@ -66,11 +83,7 @@ void handle_vmexit(thread_t *thread)
 	switch (vm->exit_context.ExitReason)
 	{
 	case WHvRunVpExitReasonMemoryAccess:
-		printf("inst: %02x %02x %02x %02x\n",
-		       vm->exit_context.MemoryAccess.InstructionBytes[0],
-		       vm->exit_context.MemoryAccess.InstructionBytes[1],
-		       vm->exit_context.MemoryAccess.InstructionBytes[2],
-		       vm->exit_context.MemoryAccess.InstructionBytes[3]);
+		print_instruction(mm);
 		printf("access info: %x\n", vm->exit_context.MemoryAccess.AccessInfo.AsUINT32);
 		printf("gpa: %llx\n", vm->exit_context.MemoryAccess.Gpa);
 		printf("gva: %llx\n", vm->exit_context.MemoryAccess.Gva);
@@ -90,10 +103,7 @@ void handle_vmexit(thread_t *thread)
 		printf("error code: %d\n", vm->exit_context.VpException.ErrorCode);
 		printf("inst count: %d\n", vm->exit_context.VpException.InstructionByteCount);
 		printf("parameter: %llx\n", vm->exit_context.VpException.ExceptionParameter);
-
-		char *p = (char *)mm_gvirt_to_hvirt(mm, vm->exit_context.VpContext.Rip);
-		if (p != NULL)
-			printf("inst: %02x %02x\n", *p, *(p + 1));
+		print_instruction(mm);
 		break;
 	}
 

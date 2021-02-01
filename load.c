@@ -1,3 +1,4 @@
+#include <cassert>
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/types.h>
@@ -103,7 +104,7 @@ conv_prot(Elf64_Word flags)
 }
 
 static void
-map_elf_file(elf_t *elf, mm_t *mm, char *filename, load_info_t *info)
+load_elf(elf_t *elf, mm_t *mm, char *filename, load_info_t *info, size_t load_offset)
 {
 	int fd = open(filename, O_RDONLY, 0);
 	if (fd < 0)
@@ -113,21 +114,36 @@ map_elf_file(elf_t *elf, mm_t *mm, char *filename, load_info_t *info)
 	fstat(fd, &statbuf) == 0
 		OR panic("can't stat");
 
-	uint8_t *data = (uint8_t *)mmap(NULL, statbuf.st_size, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_PRIVATE, fd, 0);
+	uint8_t *data = (uint8_t *)mmap((void *)0x700000000, statbuf.st_size, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_PRIVATE, fd, 0);
 	if (data == MAP_FAILED)
 		perror("mmap"), panic("mmap failed");
+fprintf(stderr, "mmap: %p--%p\n", data, data + statbuf.st_size);
+	data[0x1b2f] = 0x48;
+	data[0x1b30] = 0x8b;
+	data[0x1b31] = 0x83;
+	data[0x1b32] = 0xff;
+	data[0x1b33] = 0x5f;
+	data[0x1b34] = 0x22;
+	data[0x1b35] = 0x00;
+#if 0
+	for (int i = 0x1b2f; i < 0x1b36; i++)
+		data[i] = 0x90;
+	for (int i = 0x24e18; i < 0x24e18 + 8; i++)
+		fprintf(stderr, "%02x ", data[i]);
+	fprintf(stderr, "\n");
+#endif
+
 
 	Elf64_Ehdr *ehdr = (Elf64_Ehdr *)data;
 	uint8_t valid_ident[] = {0x7f, 'E', 'L', 'F', 0x02, 0x01, 0x01};
-	memcmp(ehdr->e_ident, valid_ident, sizeof(valid_ident)) == 0
-		OR panic("ELF header is invalid");
+	if (memcmp(ehdr->e_ident, valid_ident, sizeof(valid_ident)) != 0)
+		panic("ELF header is invalid");
 	if (!(ehdr->e_type == ET_EXEC || ehdr->e_type == ET_DYN))
 		panic("ELF is not a supported type");
 	if (ehdr->e_machine != EM_X86_64)
 		panic("ELF is not an x64 executable");
 
-	info->entry = elf->entry = ehdr->e_entry;
-
+	info->entry = elf->entry = ehdr->e_entry + load_offset;
 	int n = ehdr->e_phnum;
 	Elf64_Phdr *phdr = (Elf64_Phdr *)(data + ehdr->e_phoff);
 
@@ -137,7 +153,7 @@ map_elf_file(elf_t *elf, mm_t *mm, char *filename, load_info_t *info)
 		switch (phdr[i].p_type) {
 		case PT_LOAD: {
 			off_t offset = rounddown(phdr[i].p_offset, PAGE_SIZE_4K);
-			mm_gvirt_t gvirt = rounddown(phdr[i].p_vaddr, PAGE_SIZE_4K);
+			mm_gvirt_t gvirt = rounddown(phdr[i].p_vaddr, PAGE_SIZE_4K) + load_offset;
 			uint8_t *hvirt = data + offset;
 			uint64_t size = roundup(gvirt + phdr[i].p_memsz, PAGE_SIZE_4K) - gvirt;
 			mm_mmap_prot_t prot = conv_prot(phdr[i].p_flags);
@@ -145,10 +161,11 @@ map_elf_file(elf_t *elf, mm_t *mm, char *filename, load_info_t *info)
 
 			uint8_t *file_end = data + phdr[i].p_offset + phdr[i].p_filesz;
 			size_t remainder = hvirt + size - file_end;
+			assert(phdr[i].p_filesz != 0);
 			memset(file_end, 0, remainder);
 
 			if (load_base == 0)
-				load_base = phdr[i].p_vaddr - phdr[i].p_offset;
+				load_base = phdr[i].p_vaddr - phdr[i].p_offset + load_offset;
 			heap = roundup(max(heap, gvirt + size), PAGE_SIZE_4K);
 			break;
 		}
@@ -172,6 +189,6 @@ ldr_load(mm_t *mm, int argc, char *argv[], load_info_t *info)
 {
 	elf_t elf;
 	info->stack = mm_get_stack_top(mm);
-	map_elf_file(&elf, mm, argv[0], info);
+	load_elf(&elf, mm, argv[0], info, 0);
 	setup_stack(&elf, mm, info);
 }

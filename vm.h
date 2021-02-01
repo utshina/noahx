@@ -46,6 +46,9 @@ vcpu_init_sysregs(vcpu_t *vcpu, vcpu_sysregs_t *sysregs);
 void
 vcpu_run(vcpu_t *vcpu);
 
+void
+vcpu_stop(vcpu_t *vcpu);
+
 typedef enum {
 	VCPU_REG_RAX = WHvX64RegisterRax,
 	VCPU_REG_RCX = WHvX64RegisterRcx,

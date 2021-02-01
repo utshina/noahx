@@ -1,3 +1,4 @@
+#include <thread>
 #include <assert.h>
 #include "thread.h"
 #include "process.h"
@@ -25,11 +26,22 @@ thread_init(thread_t *thread, vcpu_sysregs_t *sysregs, mm_gvirt_t rip, mm_gvirt_
 	vcpu_set_regs(&thread->vcpu, regs, countof(regs));
 }
 
-void
-thread_run(thread_t *thread)
+static void
+start_thread(thread_t *thread)
 {
 	do {
 		vcpu_run(&thread->vcpu);
 		handle_vmexit(thread);
 	} while (thread->vcpu.in_operation);
+}
+
+void
+thread_run(thread_t *thread)
+{
+	std::thread t(start_thread, thread);
+
+	for (int i = 0; i < 1000000000; i++)
+		(void)0;
+	vcpu_stop(&thread->vcpu);
+	t.join();
 }
